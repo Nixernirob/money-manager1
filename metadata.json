@@ -1,0 +1,6 @@
+{
+  "name": "Aureum",
+  "description": "Aureum - Premium fintech engine with high-frequency glassmorphic animations, Room database tracking, loan systems, visual analytics.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
