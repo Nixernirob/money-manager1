@@ -1,7 +1,7 @@
 name: Build Android APK
 
 on:
-  workflow_dispatch: # এর মাধ্যমে আপনি যেকোনো সময় ম্যানুয়ালি বিল্ড শুরু করতে পারবেন
+  workflow_dispatch:
 
 jobs:
   build:
@@ -20,22 +20,29 @@ jobs:
     - name: Setup Android SDK
       uses: android-actions/setup-android@v3
 
-    # আপনার প্রজেক্ট যদি Flutter হয় তবে নিচের কমেন্টটি অন করতে পারেন, আর Native Android হলে এটি দরকার নেই
-    # - name: Set up Flutter
-    #   uses: subosito/flutter-action@v2
-    #   with:
-    #     channel: 'stable'
+    # ফোল্ডারের ভেতর gradlew ফাইলটি যেখানেই থাকুক না কেন তা খুঁজে বের করে পারমিশন দেবে
+    - name: Find and Grant execute permission for gradlew
+      run: |
+        find . -name "gradlew" -exec chmod +x {} \;
+        find . -name "gradlew"
 
-    - name: Grant execute permission for gradlew
-      run: chmod +x gradlew
-
+    # সাব-ফোল্ডার চেক করে স্বয়ংক্রিয়ভাবে সঠিক জায়গায় বিল্ড রান করবে
     - name: Build with Gradle
-      run: ./gradlew assembleDebug
+      run: |
+        GRADLEW_PATH=$(find . -name "gradlew" | head -n 1)
+        if [ -z "$GRADLEW_PATH" ]; then
+          echo "Error: gradlew file not found anywhere in the repository!"
+          exit 1
+        fi
+        DIR_PATH=$(dirname "$GRADLEW_PATH")
+        cd "$DIR_PATH"
+        ./gradlew assembleDebug
       env:
         GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
 
+    # তৈরি হওয়া যেকোনো APK ফাইল খুঁজে বের করে আপলোড করবে
     - name: Upload APK Artifact
       uses: actions/upload-artifact@v4
       with:
         name: my-app-debug-apk
-        path: app/build/outputs/apk/debug/app-debug.apk
+        path: '**/build/outputs/apk/debug/*.apk'
