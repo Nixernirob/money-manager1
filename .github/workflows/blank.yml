@@ -20,27 +20,35 @@ jobs:
     - name: Setup Android SDK
       uses: android-actions/setup-android@v3
 
-    # ফোল্ডারের ভেতর gradlew ফাইলটি যেখানেই থাকুক না কেন তা খুঁজে বের করে পারমিশন দেবে
-    - name: Find and Grant execute permission for gradlew
-      run: |
-        find . -name "gradlew" -exec chmod +x {} \;
-        find . -name "gradlew"
+    # গ্লোবাল গ্রেডল এনভায়রনমেন্ট সেটআপ করা (যেহেতু gradlew ফাইল মিসিং)
+    - name: Setup Gradle
+      uses: gradle/actions/setup-gradle@v4
 
-    # সাব-ফোল্ডার চেক করে স্বয়ংক্রিয়ভাবে সঠিক জায়গায় বিল্ড রান করবে
+    # বিল্ড রান করা (gradlew না থাকলে সরাসরি gradle কমান্ড ব্যবহার করবে)
     - name: Build with Gradle
       run: |
         GRADLEW_PATH=$(find . -name "gradlew" | head -n 1)
-        if [ -z "$GRADLEW_PATH" ]; then
-          echo "Error: gradlew file not found anywhere in the repository!"
-          exit 1
+        if [ -n "$GRADLEW_PATH" ]; then
+          echo "Using gradlew wrapper..."
+          DIR_PATH=$(dirname "$GRADLEW_PATH")
+          cd "$DIR_PATH"
+          chmod +x ./gradlew
+          ./gradlew assembleDebug
+        else
+          echo "gradlew not found. Searching for build.gradle instead..."
+          BUILD_GRADLE_PATH=$(find . -name "build.gradle" -o -name "build.gradle.kts" | head -n 1)
+          if [ -z "$BUILD_GRADLE_PATH" ]; then
+            echo "Error: No Android project files found at all!"
+            exit 1
+          fi
+          DIR_PATH=$(dirname "$BUILD_GRADLE_PATH")
+          cd "$DIR_PATH"
+          gradle assembleDebug
         fi
-        DIR_PATH=$(dirname "$GRADLEW_PATH")
-        cd "$DIR_PATH"
-        ./gradlew assembleDebug
       env:
         GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
 
-    # তৈরি হওয়া যেকোনো APK ফাইল খুঁজে বের করে আপলোড করবে
+    # জেনারেট হওয়া APK ফাইল আপলোড করা
     - name: Upload APK Artifact
       uses: actions/upload-artifact@v4
       with:
