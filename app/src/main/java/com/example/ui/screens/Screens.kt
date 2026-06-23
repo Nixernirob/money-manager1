@@ -35,12 +35,41 @@ import androidx.compose.ui.unit.sp
 import com.example.data.db.Account
 import com.example.data.db.Loan
 import com.example.data.db.Transaction
+import com.example.data.db.Category
 import com.example.ui.components.*
 import com.example.ui.theme.*
 import com.example.ui.viewmodel.AureumViewModel
 import java.text.SimpleDateFormat
 import java.util.*
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.LocalIndication
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import android.net.Uri
+import java.io.File
+import java.io.FileOutputStream
+import coil.compose.AsyncImage
+
+private fun copyUriToInternalStorage(context: android.content.Context, uri: Uri): String? {
+    return try {
+        val inputStream = context.contentResolver.openInputStream(uri) ?: return null
+        val fileName = "receipt_${System.currentTimeMillis()}.jpg"
+        val file = File(context.filesDir, fileName)
+        val outputStream = FileOutputStream(file)
+        inputStream.use { input ->
+            outputStream.use { output ->
+                input.copyTo(output)
+            }
+        }
+        file.absolutePath
+    } catch (e: Exception) {
+        e.printStackTrace()
+        null
+    }
+}
 
 private val TextSecondary: Color
     @Composable get() = if (MaterialTheme.colorScheme.background.luminance() < 0.5f) Color(0xFFC7C6CD) else Color(0xFF74777F)
@@ -272,6 +301,7 @@ fun DashboardScreen(
                 TransactionRow(
                     transaction = trans,
                     currency = currency,
+                    viewModel = viewModel,
                     onDelete = { viewModel.deleteTransaction(trans) }
                 )
             }
@@ -354,9 +384,9 @@ fun AccountSwipeCard(
                 )
                 AureumVectorIcon(
                     name = when (type.uppercase()) {
-                        "BANK" -> "bank"
-                        "WALLET" -> "vault"
-                        "CREDIT" -> "credit_card"
+                        "BANK", "ACCOUNTS" -> "bank"
+                        "WALLET", "CASH" -> "vault"
+                        "CREDIT", "CARD" -> "credit_card"
                         else -> "stats"
                     },
                     tint = if (isDark) tintColor else primaryTextColor.copy(alpha = 0.7f),
@@ -452,42 +482,64 @@ private data class FourColors(val bg: Color, val border: Color, val text: Color,
 fun TransactionRow(
     transaction: Transaction,
     currency: String,
+    viewModel: AureumViewModel,
     onDelete: () -> Unit
 ) {
     var showMoreActions by remember { mutableStateOf(false) }
+    var showReceiptDialog by remember { mutableStateOf(false) }
     val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
+    val specs = AureumThemeStyles.specs
+
+    val categories by viewModel.allCategories.collectAsState()
+    val categoryIcon = categories.find { it.name.lowercase() == transaction.category.lowercase() }?.icon
 
     val rowBackground = if (isDark) Color.White.copy(alpha = 0.03f) else Color.White
     val rowBorderColor = if (isDark) Color.White.copy(alpha = 0.06f) else Color(0xFFE0E2EC)
     val noteColor = if (isDark) Color.White else Color(0xFF1A1C1E)
     val categoryColor = if (isDark) TextSecondary else Color(0xFF74777F)
-    val amountColor = if (transaction.type == "INCOME") {
-        if (isDark) AssetGreen else Color(0xFF2E7D32)
-    } else {
-        if (isDark) Color.White else Color(0xFF1A1C1E)
+    val amountColor = when (transaction.type) {
+        "INCOME" -> if (isDark) AssetGreen else Color(0xFF2E7D32)
+        "TRANSFER" -> if (isDark) specs.activeContainer else Color(0xFF005AC1)
+        else -> if (isDark) Color.White else Color(0xFF1A1C1E)
     }
     
-    val avatarBg = if (transaction.type == "INCOME") {
-        if (isDark) AssetGreen.copy(alpha = 0.15f) else Color(0xFFE8F3D6)
-    } else {
-        if (isDark) ExpenseCoral.copy(alpha = 0.15f) else Color(0xFFF0F0F7)
+    val avatarBg = when (transaction.type) {
+        "INCOME" -> if (isDark) AssetGreen.copy(alpha = 0.15f) else Color(0xFFE8F3D6)
+        "TRANSFER" -> if (isDark) specs.activeContainer.copy(alpha = 0.15f) else Color(0xFFE5F1FF)
+        else -> if (isDark) ExpenseCoral.copy(alpha = 0.15f) else Color(0xFFF1F1FB)
     }
     
-    val avatarIconTint = if (transaction.type == "INCOME") {
-        if (isDark) AssetGreen else Color(0xFF2D3325)
-    } else {
-        if (isDark) ExpenseCoral else Color(0xFF44474E)
+    val avatarIconTint = when (transaction.type) {
+        "INCOME" -> if (isDark) AssetGreen else Color(0xFF2D3325)
+        "TRANSFER" -> if (isDark) specs.activeContainer else Color(0xFF005AC1)
+        else -> if (isDark) ExpenseCoral else Color(0xFF44474E)
     }
 
     val dividerColor = if (isDark) Color.White.copy(alpha = 0.08f) else Color(0xFFE0E2EC)
 
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (isPressed) 0.96f else 1f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow),
+        label = "press_scale"
+    )
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
             .clip(RoundedCornerShape(16.dp))
             .background(rowBackground)
             .border(1.dp, rowBorderColor, RoundedCornerShape(16.dp))
-            .clickable { showMoreActions = !showMoreActions }
+            .clickable(
+                interactionSource = interactionSource,
+                indication = LocalIndication.current,
+                onClick = { showMoreActions = !showMoreActions }
+            )
             .padding(16.dp)
     ) {
         Row(
@@ -507,13 +559,15 @@ fun TransactionRow(
                     contentAlignment = Alignment.Center
                 ) {
                     AureumVectorIcon(
-                        name = when (transaction.category.lowercase()) {
+                        name = categoryIcon ?: when (transaction.category.lowercase()) {
                             "housing" -> "bank"
                             "retail", "shopping" -> "retail"
                             "dining", "food" -> "dining"
                             "salary" -> "income"
                             "internal", "loans" -> "transfer"
-                            else -> "expense"
+                            else -> {
+                                if (transaction.type == "TRANSFER") "transfer" else "expense"
+                            }
                         },
                         tint = avatarIconTint,
                         modifier = Modifier.size(20.dp)
@@ -530,17 +584,29 @@ fun TransactionRow(
                         overflow = TextOverflow.Ellipsis
                     )
                     Text(
-                        text = transaction.category,
+                        text = if (transaction.type == "TRANSFER") "Transfer" else transaction.category,
                         color = categoryColor,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold
                     )
+                    if (transaction.type == "TRANSFER" && transaction.fee > 0.0) {
+                        Text(
+                            text = "Fee: $currency${String.format(Locale.getDefault(), "%,.2f", transaction.fee)}",
+                            color = categoryColor,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
                 }
             }
 
             Column(horizontalAlignment = Alignment.End) {
                 Text(
-                    text = "${if (transaction.type == "INCOME") "+" else "-"}$currency${String.format(Locale.getDefault(), "%,.2f", transaction.amount)}",
+                    text = if (transaction.type == "TRANSFER") {
+                        "⇄ $currency${String.format(Locale.getDefault(), "%,.2f", transaction.amount)}"
+                    } else {
+                        "${if (transaction.type == "INCOME") "+" else "-"}$currency${String.format(Locale.getDefault(), "%,.2f", transaction.amount)}"
+                    },
                     color = amountColor,
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Bold,
@@ -570,11 +636,12 @@ fun TransactionRow(
                 ) {
                     if (transaction.receiptPath != null) {
                         Text(
-                            text = "📎 Attached Receipt",
+                            text = "📎 View Attachment",
                             color = if (isDark) MidnightPrimary else Color(0xFF005AC1),
                             fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
                             textDecoration = TextDecoration.Underline,
-                            modifier = Modifier.clickable { /* Simulate display */ }
+                            modifier = Modifier.clickable { showReceiptDialog = true }
                         )
                     } else {
                         Spacer(modifier = Modifier.width(1.dp))
@@ -592,6 +659,65 @@ fun TransactionRow(
                 }
             }
         }
+    }
+
+    // Modal Receipt Image Viewer Dialog
+    if (showReceiptDialog && transaction.receiptPath != null) {
+        AlertDialog(
+            onDismissRequest = { showReceiptDialog = false },
+            title = {
+                Text(
+                    text = "Transaction Attachment",
+                    color = noteColor,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp
+                )
+            },
+            text = {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(280.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Color.Black.copy(alpha = 0.05f))
+                            .border(1.dp, rowBorderColor, RoundedCornerShape(12.dp))
+                    ) {
+                        AsyncImage(
+                            model = transaction.receiptPath,
+                            contentDescription = "Receipt Attachment",
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = androidx.compose.ui.layout.ContentScale.Fit
+                        )
+                    }
+                    if (transaction.note.isNotBlank()) {
+                        Text(
+                            text = transaction.note,
+                            color = noteColor,
+                            fontSize = 13.sp,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = { showReceiptDialog = false },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (isDark) specs.activeContainer else specs.inactiveContainer
+                    )
+                ) {
+                    Text(
+                        "Close",
+                        color = if (isDark) specs.onActiveContainer else specs.contentPrimary,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        )
     }
 }
 
@@ -731,6 +857,7 @@ fun TransactionsScreen(
                     TransactionRow(
                         transaction = trans,
                         currency = currency,
+                        viewModel = viewModel,
                         onDelete = { viewModel.deleteTransaction(trans) }
                     )
                 }
@@ -980,10 +1107,18 @@ fun AccountsScreen(
     var accountNameInput by remember { mutableStateOf("") }
     var balanceInput by remember { mutableStateOf("") }
     var creditLimitInput by remember { mutableStateOf("") }
-    var selectedType by remember { mutableStateOf("BANK") } // BANK, CASH, CREDIT
+    var selectedType by remember { mutableStateOf("ACCOUNTS") } // CASH, ACCOUNTS, CARD
 
-    val assetsTotal = accounts.filter { it.type != "CREDIT" }.sumOf { it.balance }
-    val creditOutflow = accounts.filter { it.type == "CREDIT" }.sumOf { it.balance }
+    // Edit Account Dialog states
+    var showEditAccountDialog by remember { mutableStateOf(false) }
+    var editingAccount by remember { mutableStateOf<Account?>(null) }
+    var editAccountName by remember { mutableStateOf("") }
+    var editAccountBalance by remember { mutableStateOf("") }
+    var editAccountType by remember { mutableStateOf("ACCOUNTS") }
+    var editCreditLimit by remember { mutableStateOf("") }
+
+    val assetsTotal = accounts.filter { it.type != "CREDIT" && it.type != "CARD" }.sumOf { it.balance }
+    val creditOutflow = accounts.filter { it.type == "CREDIT" || it.type == "CARD" }.sumOf { it.balance }
     val netWorthVal = assetsTotal - creditOutflow
     val specs = AureumThemeStyles.specs
 
@@ -1007,7 +1142,10 @@ fun AccountsScreen(
             )
 
             Button(
-                onClick = { showAddAccountDialog = true },
+                onClick = { 
+                    selectedType = "ACCOUNTS"
+                    showAddAccountDialog = true 
+                },
                 colors = ButtonDefaults.buttonColors(
                     containerColor = if (specs.isDark) specs.activeContainer.copy(alpha = 0.25f) else specs.activeContainer
                 ),
@@ -1059,6 +1197,14 @@ fun AccountsScreen(
                         .clip(RoundedCornerShape(18.dp))
                         .background(specs.inactiveContainer)
                         .border(1.dp, specs.inactiveContainerBorder, RoundedCornerShape(18.dp))
+                        .clickable {
+                            editingAccount = acc
+                            editAccountName = acc.name
+                            editAccountBalance = acc.balance.toString()
+                            editAccountType = acc.type.uppercase()
+                            editCreditLimit = acc.creditLimit?.toString() ?: ""
+                            showEditAccountDialog = true
+                        }
                         .padding(16.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
@@ -1082,7 +1228,7 @@ fun AccountsScreen(
                     Column(horizontalAlignment = Alignment.End) {
                         Text(
                             "$currency${String.format(Locale.getDefault(), "%,.2f", acc.balance)}",
-                            color = if (acc.type == "CREDIT") ExpenseCoral else specs.contentPrimary,
+                            color = if (acc.type == "CREDIT" || acc.type == "CARD") ExpenseCoral else specs.contentPrimary,
                             fontWeight = FontWeight.Bold,
                             fontFamily = FontFamily.Monospace,
                             fontSize = 15.sp
@@ -1126,25 +1272,36 @@ fun AccountsScreen(
                         )
                     )
                     
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf("BANK", "WALLET", "CREDIT").forEach { t ->
-                            Button(
-                                onClick = { selectedType = t },
+                    Text("SELECT VAULT GROUP", color = specs.contentSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(), 
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf("CASH", "ACCOUNTS", "CARD").forEach { t ->
+                            val active = selectedType == t
+                            Box(
                                 modifier = Modifier
                                     .weight(1f)
-                                    .then(
-                                        if (selectedType != t) Modifier.border(1.dp, specs.inactiveContainerBorder, RoundedCornerShape(100)) else Modifier
-                                    ),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = if (selectedType == t) specs.activeContainer else specs.inactiveContainer
-                                )
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(if (active) specs.activeContainer else specs.inactiveContainer)
+                                    .border(1.dp, if (active) Color.Transparent else specs.inactiveContainerBorder, RoundedCornerShape(12.dp))
+                                    .clickable { selectedType = t }
+                                    .padding(vertical = 10.dp),
+                                contentAlignment = Alignment.Center
                             ) {
-                                Text(t, fontSize = 10.sp, color = if (selectedType == t) specs.onActiveContainer else specs.contentPrimary, fontWeight = FontWeight.Bold)
+                                Text(
+                                    text = t,
+                                    fontSize = 10.sp,
+                                    color = if (active) specs.onActiveContainer else specs.contentPrimary,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
                             }
                         }
                     }
 
-                    if (selectedType == "CREDIT") {
+                    if (selectedType == "CARD" || selectedType == "CREDIT") {
                         TextField(
                             value = creditLimitInput,
                             onValueChange = { creditLimitInput = it },
@@ -1184,6 +1341,141 @@ fun AccountsScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showAddAccountDialog = false }) {
+                    Text("Cancel", color = specs.contentSecondary, fontWeight = FontWeight.Bold)
+                }
+            }
+        )
+    }
+
+    // Edit and Delete Account dialog
+    if (showEditAccountDialog && editingAccount != null) {
+        val targetAccount = editingAccount!!
+        AlertDialog(
+            onDismissRequest = { showEditAccountDialog = false },
+            title = { Text("Edit or Delete Vault", color = specs.contentPrimary, fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    TextField(
+                        value = editAccountName,
+                        onValueChange = { editAccountName = it },
+                        label = { Text("Name") },
+                        colors = TextFieldDefaults.colors(
+                            focusedTextColor = specs.contentPrimary,
+                            unfocusedTextColor = specs.contentPrimary,
+                            focusedContainerColor = Color.Transparent,
+                            unfocusedContainerColor = Color.Transparent
+                        )
+                    )
+                    TextField(
+                        value = editAccountBalance,
+                        onValueChange = { editAccountBalance = it },
+                        label = { Text("Current Balance") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        colors = TextFieldDefaults.colors(
+                            focusedTextColor = specs.contentPrimary,
+                            unfocusedTextColor = specs.contentPrimary,
+                            focusedContainerColor = Color.Transparent,
+                            unfocusedContainerColor = Color.Transparent
+                        )
+                    )
+                    
+                    Text("SELECT VAULT GROUP", color = specs.contentSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(), 
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf("CASH", "ACCOUNTS", "CARD").forEach { t ->
+                            val active = editAccountType == t
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(if (active) specs.activeContainer else specs.inactiveContainer)
+                                    .border(1.dp, if (active) Color.Transparent else specs.inactiveContainerBorder, RoundedCornerShape(12.dp))
+                                    .clickable { editAccountType = t }
+                                    .padding(vertical = 10.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = t,
+                                    fontSize = 10.sp,
+                                    color = if (active) specs.onActiveContainer else specs.contentPrimary,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
+
+                    if (editAccountType == "CARD" || editAccountType == "CREDIT") {
+                        TextField(
+                            value = editCreditLimit,
+                            onValueChange = { editCreditLimit = it },
+                            label = { Text("Credit Card Limit") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            colors = TextFieldDefaults.colors(
+                                focusedTextColor = specs.contentPrimary,
+                                unfocusedTextColor = specs.contentPrimary,
+                                focusedContainerColor = Color.Transparent,
+                                unfocusedContainerColor = Color.Transparent
+                            )
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+                    
+                    Button(
+                        onClick = {
+                            viewModel.deleteAccount(targetAccount)
+                            showEditAccountDialog = false
+                            editingAccount = null
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = ExpenseCoral.copy(alpha = 0.2f)),
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("DELETE VAULT", color = ExpenseCoral, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val limit = editCreditLimit.toDoubleOrNull()
+                        val updated = targetAccount.copy(
+                            name = editAccountName,
+                            balance = editAccountBalance.toDoubleOrNull() ?: targetAccount.balance,
+                            type = editAccountType,
+                            creditLimit = limit,
+                            iconName = when (editAccountType) {
+                                "ACCOUNTS" -> "account_balance"
+                                "CASH" -> "savings"
+                                "CARD" -> "credit_card"
+                                else -> "cash"
+                            }
+                        )
+                        viewModel.updateAccount(updated)
+                        showEditAccountDialog = false
+                        editingAccount = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = specs.activeContainer)
+                ) {
+                    Text("Save Changes", color = specs.onActiveContainer, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { 
+                        showEditAccountDialog = false 
+                        editingAccount = null
+                    }
+                ) {
                     Text("Cancel", color = specs.contentSecondary, fontWeight = FontWeight.Bold)
                 }
             }
@@ -1482,12 +1774,41 @@ fun AddTransactionScreen(
 
     var amountStr by remember { mutableStateOf("0") }
     var selectedType by remember { mutableStateOf("EXPENSE") } // EXPENSE, INCOME, TRANSFER
-    var selectedCategory by remember { mutableStateOf("Dining") }
+    var selectedCategory by remember { mutableStateOf("") }
     var noteStr by remember { mutableStateOf("") }
     var selectedAccountId by remember { mutableStateOf(1) }
     var destinationAccountId by remember { mutableStateOf<Int?>(null) }
+    var transferFeeStr by remember { mutableStateOf("0") }
+    var receiptPath by remember { mutableStateOf<String?>(null) }
+
+    var showKeyboard by remember { mutableStateOf(false) }
+    var keypadTarget by remember { mutableStateOf("AMOUNT") } // AMOUNT, FEE
+
+    val allCategories by viewModel.allCategories.collectAsState()
+    val filteredCategories = allCategories.filter { it.type == selectedType }
+
+    androidx.compose.runtime.LaunchedEffect(selectedType, filteredCategories) {
+        if (filteredCategories.isNotEmpty()) {
+            if (filteredCategories.none { it.name == selectedCategory }) {
+                selectedCategory = filteredCategories.first().name
+            }
+        }
+    }
 
     val categories = listOf("Dining", "Retail", "Housing", "Salary", "Transport", "Internal")
+    val specs = AureumThemeStyles.specs
+    val context = LocalContext.current
+
+    val imagePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        uri?.let {
+            val path = copyUriToInternalStorage(context, it)
+            if (path != null) {
+                receiptPath = path
+            }
+        }
+    }
 
     Column(
         modifier = modifier
@@ -1504,16 +1825,20 @@ fun AddTransactionScreen(
         ) {
             Text(
                 "TRANSACTION CREATION",
-                color = TextSecondary,
+                color = specs.contentSecondary,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = 1.5.sp
             )
             Button(
                 onClick = onComplete,
-                colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(alpha = 0.05f))
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = specs.inactiveContainer
+                ),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.border(1.dp, specs.inactiveContainerBorder, RoundedCornerShape(12.dp))
             ) {
-                Text("Dismiss", color = Color.White, fontSize = 11.sp)
+                Text("Dismiss", color = specs.contentPrimary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
             }
         }
 
@@ -1529,60 +1854,91 @@ fun AddTransactionScreen(
                         selectedType = t 
                         if (t != "TRANSFER") destinationAccountId = null
                     },
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier
+                        .weight(1f)
+                        .then(
+                            if (!active) Modifier.border(1.dp, specs.inactiveContainerBorder, RoundedCornerShape(12.dp)) else Modifier
+                        ),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = if (active) MidnightTertiary else Color.White.copy(alpha = 0.04f)
+                        containerColor = if (active) specs.activeContainer else specs.inactiveContainer
                     ),
                     shape = RoundedCornerShape(12.dp)
                 ) {
-                    Text(t, fontSize = 10.sp, color = if (active) Color.Black else Color.White, fontWeight = FontWeight.Bold)
+                    Text(t, fontSize = 10.sp, color = if (active) specs.onActiveContainer else specs.contentPrimary, fontWeight = FontWeight.Bold)
                 }
             }
         }
 
-        // Amount Display (High frequency vector counter)
+        // Amount Display (Tapping launches the keypad dialog)
+        Text("TRANSACTION AMOUNT", color = specs.contentSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(20.dp))
-                .background(Color.White.copy(alpha = 0.03f))
+                .background(specs.inactiveContainer)
+                .border(1.dp, specs.activeContainer.copy(alpha = 0.4f), RoundedCornerShape(20.dp))
+                .clickable {
+                    keypadTarget = "AMOUNT"
+                    showKeyboard = true
+                }
                 .padding(20.dp),
             contentAlignment = Alignment.Center
         ) {
-            Text(
-                text = "$currency$amountStr",
-                color = if (selectedType == "INCOME") AssetGreen else Color.White,
-                fontSize = 36.sp,
-                fontWeight = FontWeight.Bold,
-                fontFamily = FontFamily.Monospace
-            )
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(
+                    text = "$currency$amountStr",
+                    color = if (selectedType == "INCOME") AssetGreen else if (selectedType == "EXPENSE") ExpenseCoral else specs.contentPrimary,
+                    fontSize = 36.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "Tap to edit amount",
+                    color = specs.contentSecondary,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium
+                )
+            }
         }
 
-        // Category selection grid
-        Text("SELECT CATEGORY", color = TextSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            categories.forEach { cat ->
-                val active = selectedCategory == cat
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(if (active) MidnightPrimary else Color.White.copy(alpha = 0.02f))
-                        .border(1.dp, Color.White.copy(alpha = 0.06f), RoundedCornerShape(10.dp))
-                        .clickable { selectedCategory = cat }
-                        .padding(horizontal = 14.dp, vertical = 10.dp)
-                ) {
-                    Text(cat, color = if (active) Color.Black else Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+        // Category selection grid (Regular expenses/incomes only)
+        if (selectedType != "TRANSFER") {
+            Text("SELECT CATEGORY", color = specs.contentSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                filteredCategories.forEach { cat ->
+                    val active = selectedCategory == cat.name
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(if (active) specs.activeContainer else specs.inactiveContainer)
+                            .border(1.dp, if (active) Color.Transparent else specs.inactiveContainerBorder, RoundedCornerShape(10.dp))
+                            .clickable { selectedCategory = cat.name }
+                            .padding(horizontal = 14.dp, vertical = 10.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            AureumVectorIcon(
+                                name = cat.icon,
+                                tint = if (active) specs.onActiveContainer else specs.contentPrimary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(cat.name, color = if (active) specs.onActiveContainer else specs.contentPrimary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        }
+                    }
                 }
             }
         }
 
-        // Account selectors
-        Text("SRC ACCOUNT", color = TextSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        // Source Account
+        Text("SRC ACCOUNT", color = specs.contentSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1594,18 +1950,24 @@ fun AddTransactionScreen(
                 Box(
                     modifier = Modifier
                         .clip(RoundedCornerShape(10.dp))
-                        .background(if (active) MidnightPrimary else Color.White.copy(alpha = 0.02f))
-                        .border(1.dp, Color.White.copy(alpha = 0.06f), RoundedCornerShape(10.dp))
-                        .clickable { selectedAccountId = acc.id }
+                        .background(if (active) specs.activeContainer else specs.inactiveContainer)
+                        .border(1.dp, if (active) Color.Transparent else specs.inactiveContainerBorder, RoundedCornerShape(10.dp))
+                        .clickable { 
+                            selectedAccountId = acc.id 
+                            if (destinationAccountId == acc.id) {
+                                destinationAccountId = null
+                            }
+                        }
                         .padding(horizontal = 14.dp, vertical = 10.dp)
                 ) {
-                    Text(acc.name, color = if (active) Color.Black else Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    Text(acc.name, color = if (active) specs.onActiveContainer else specs.contentPrimary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                 }
             }
         }
 
+        // Destination Account & Fee for Transfers
         if (selectedType == "TRANSFER") {
-            Text("DEST ACCOUNT", color = TextSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            Text("DEST ACCOUNT", color = specs.contentSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1617,58 +1979,143 @@ fun AddTransactionScreen(
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(10.dp))
-                            .background(if (active) MidnightPrimary else Color.White.copy(alpha = 0.02f))
-                            .border(1.dp, Color.White.copy(alpha = 0.06f), RoundedCornerShape(10.dp))
+                            .background(if (active) specs.activeContainer else specs.inactiveContainer)
+                            .border(1.dp, if (active) Color.Transparent else specs.inactiveContainerBorder, RoundedCornerShape(10.dp))
                             .clickable { destinationAccountId = acc.id }
                             .padding(horizontal = 14.dp, vertical = 10.dp)
                     ) {
-                        Text(acc.name, color = if (active) Color.Black else Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        Text(acc.name, color = if (active) specs.onActiveContainer else specs.contentPrimary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            Text("TRANSFER FEE (OPTIONAL)", color = specs.contentSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(specs.inactiveContainer)
+                    .border(1.dp, specs.inactiveContainerBorder, RoundedCornerShape(16.dp))
+                    .clickable {
+                        keypadTarget = "FEE"
+                        showKeyboard = true
+                    }
+                    .padding(16.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = "$currency$transferFeeStr",
+                        color = specs.contentPrimary,
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Tap to enter transfer fee",
+                        color = specs.contentSecondary,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+            }
+        }
+
+        // Memo field descriptions
+        Text("MEMO / DESCRIPTION", color = specs.contentSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        TextField(
+            value = noteStr,
+            onValueChange = { noteStr = it },
+            placeholder = { Text("Add transaction description...", color = specs.contentSecondary) },
+            colors = TextFieldDefaults.colors(
+                focusedContainerColor = specs.inactiveContainer,
+                unfocusedContainerColor = specs.inactiveContainer,
+                focusedTextColor = specs.contentPrimary,
+                unfocusedTextColor = specs.contentPrimary,
+                focusedIndicatorColor = specs.activeContainer,
+                unfocusedIndicatorColor = Color.Transparent,
+                disabledContainerColor = Color.Transparent,
+                disabledIndicatorColor = Color.Transparent
+            ),
+            shape = RoundedCornerShape(8.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .border(1.dp, specs.inactiveContainerBorder, RoundedCornerShape(8.dp))
+        )
+
+        // Receipt / Image picking section
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("ATTACH RECEIPT IMAGE (OPTIONAL)", color = specs.contentSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            if (receiptPath == null) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(80.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(specs.inactiveContainer)
+                        .border(1.dp, specs.inactiveContainerBorder, RoundedCornerShape(12.dp))
+                        .clickable { imagePickerLauncher.launch("image/*") },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        AureumVectorIcon(name = "image", tint = specs.contentSecondary, modifier = Modifier.size(24.dp))
+                        Text("Add Receipt / Image from Device", color = specs.contentSecondary, fontSize = 13.sp)
+                    }
+                }
+            } else {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(180.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(specs.inactiveContainer)
+                        .border(1.dp, specs.inactiveContainerBorder, RoundedCornerShape(12.dp))
+                ) {
+                    AsyncImage(
+                        model = receiptPath,
+                        contentDescription = "Picked Receipt Image",
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                    )
+                    IconButton(
+                        onClick = { receiptPath = null },
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(8.dp)
+                            .background(Color.Black.copy(alpha = 0.5f), CircleShape)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Remove Image",
+                            tint = Color.White
+                        )
                     }
                 }
             }
         }
 
-        // Memo field inputs
-        TextField(
-            value = noteStr,
-            onValueChange = { noteStr = it },
-            placeholder = { Text("Add transaction description...", color = TextSecondary) },
-            colors = TextFieldDefaults.colors(
-                focusedContainerColor = Color.White.copy(alpha = 0.03f),
-                unfocusedContainerColor = Color.White.copy(alpha = 0.03f),
-                focusedTextColor = Color.White,
-                unfocusedTextColor = Color.White,
-                focusedIndicatorColor = MidnightTertiary
-            ),
-            modifier = Modifier.fillMaxWidth()
-        )
-
-        // Built-in Numeric Keypad
-        NumericKeypad(
-            onKeyPress = { key ->
-                if (key == "⌫") {
-                    amountStr = if (amountStr.length <= 1) "0" else amountStr.dropLast(1)
-                } else if (key == ".") {
-                    if (!amountStr.contains(".")) amountStr += "."
-                } else {
-                    if (amountStr == "0") amountStr = key else amountStr += key
-                }
-            }
-        )
-
         // Save Button
         Button(
             onClick = {
                 val value = amountStr.toDoubleOrNull() ?: 0.0
+                val feeVal = if (selectedType == "TRANSFER") (transferFeeStr.toDoubleOrNull() ?: 0.0) else 0.0
                 if (value > 0.0) {
                     viewModel.addTransaction(
                         type = selectedType,
                         amount = value,
-                        category = selectedCategory,
+                        category = if (selectedType == "TRANSFER") "Internal" else selectedCategory,
                         accountId = selectedAccountId,
                         toAccountId = destinationAccountId,
                         note = noteStr,
-                        timestamp = System.currentTimeMillis()
+                        timestamp = System.currentTimeMillis(),
+                        receiptPath = receiptPath,
+                        fee = feeVal
                     )
                     onComplete()
                 }
@@ -1676,11 +2123,89 @@ fun AddTransactionScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(vertical = 12.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = MidnightTertiary),
+            colors = ButtonDefaults.buttonColors(containerColor = specs.activeContainer),
             shape = RoundedCornerShape(16.dp)
         ) {
-            Text("LOG TRANSACTION", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            Text("LOG TRANSACTION", color = specs.onActiveContainer, fontWeight = FontWeight.Bold, fontSize = 15.sp)
         }
+    }
+
+    // Number keyboard overlay popup dialog
+    if (showKeyboard) {
+        val targetLabel = if (keypadTarget == "AMOUNT") "Transaction Amount" else "Transfer Fee (Optional)"
+        val currentVal = if (keypadTarget == "AMOUNT") amountStr else transferFeeStr
+        
+        AlertDialog(
+            onDismissRequest = { showKeyboard = false },
+            title = {
+                Text(
+                    text = "Enter $targetLabel",
+                    color = specs.contentPrimary,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp
+                )
+            },
+            text = {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(specs.inactiveContainer)
+                            .border(1.dp, specs.inactiveContainerBorder, RoundedCornerShape(16.dp))
+                            .padding(16.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "$currency$currentVal",
+                            color = if (keypadTarget == "AMOUNT") {
+                                if (selectedType == "INCOME") AssetGreen else if (selectedType == "EXPENSE") ExpenseCoral else specs.contentPrimary
+                            } else {
+                                specs.contentSecondary
+                            },
+                            fontSize = 32.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+
+                    NumericKeypad(
+                        onKeyPress = { key ->
+                            if (keypadTarget == "AMOUNT") {
+                                if (key == "⌫") {
+                                    amountStr = if (amountStr.length <= 1) "0" else amountStr.dropLast(1)
+                                } else if (key == ".") {
+                                    if (!amountStr.contains(".")) amountStr += "."
+                                } else {
+                                    if (amountStr == "0") amountStr = key else amountStr += key
+                                }
+                            } else {
+                                if (key == "⌫") {
+                                    transferFeeStr = if (transferFeeStr.length <= 1) "0" else transferFeeStr.dropLast(1)
+                                } else if (key == ".") {
+                                    if (!transferFeeStr.contains(".")) transferFeeStr += "."
+                                } else {
+                                    if (transferFeeStr == "0") transferFeeStr = key else transferFeeStr += key
+                                }
+                            }
+                        }
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = { showKeyboard = false },
+                    colors = ButtonDefaults.buttonColors(containerColor = specs.activeContainer),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Text("Done", color = specs.onActiveContainer, fontWeight = FontWeight.Bold)
+                }
+            }
+        )
     }
 }
 
@@ -1692,6 +2217,7 @@ fun NumericKeypad(onKeyPress: (String) -> Unit) {
         listOf("7", "8", "9"),
         listOf(".", "0", "⌫")
     )
+    val specs = AureumThemeStyles.specs
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         buttons.forEach { row ->
@@ -1705,11 +2231,12 @@ fun NumericKeypad(onKeyPress: (String) -> Unit) {
                             .weight(1f)
                             .height(54.dp)
                             .clip(RoundedCornerShape(12.dp))
-                            .background(Color.White.copy(alpha = 0.05f))
+                            .background(specs.inactiveContainer)
+                            .border(1.dp, specs.inactiveContainerBorder, RoundedCornerShape(12.dp))
                             .clickable { onKeyPress(char) },
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(char, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                        Text(char, color = specs.contentPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -1729,6 +2256,18 @@ fun SettingsScreen(
     val themeOverride by viewModel.isDarkTheme.collectAsState()
     val exportStatusMsg by viewModel.exportMessage.collectAsState()
     val secureMode by viewModel.secureModeEnabled.collectAsState()
+
+    val isPinGuardEnabled by viewModel.isPinGuardEnabled.collectAsState()
+    val correctPin by viewModel.correctPin.collectAsState()
+    var showChangePinDialog by remember { mutableStateOf(false) }
+    var newPinInput by remember { mutableStateOf("") }
+
+    var showWipeDataConfirm by remember { mutableStateOf(false) }
+    var wipeDataPinInput by remember { mutableStateOf("") }
+    var wipeDataError by remember { mutableStateOf(false) }
+
+    var showCategoryManager by remember { mutableStateOf(false) }
+    var showRestoreDefaultsConfirm by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
@@ -1775,13 +2314,6 @@ fun SettingsScreen(
             }
         }
 
-        // Custom Calculator Utility Box
-        GlassCard(modifier = Modifier.fillMaxWidth()) {
-            Text("BUDGET CALCULATOR TOOL", color = specs.contentPrimary, fontWeight = FontWeight.Bold, fontSize = 13.sp)
-            Spacer(modifier = Modifier.height(12.dp))
-            CalculatorCompactWidget(viewModel = viewModel)
-        }
-
         // Security Toggles
         GlassCard(modifier = Modifier.fillMaxWidth()) {
             Text("LEDGER ACCESS SECURITY", color = specs.contentPrimary, fontWeight = FontWeight.Bold, fontSize = 13.sp)
@@ -1797,13 +2329,54 @@ fun SettingsScreen(
                     Text("Protect visual states on hide", color = specs.contentSecondary, fontSize = 11.sp)
                 }
                 Switch(
-                    checked = viewModel.isLocked.value,
-                    onCheckedChange = { viewModel.isLocked.value = it },
+                    checked = isPinGuardEnabled,
+                    onCheckedChange = { viewModel.setPinGuardEnabled(it) },
                     colors = SwitchDefaults.colors(checkedThumbColor = specs.activeContainer)
                 )
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            if (isPinGuardEnabled) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(specs.inactiveContainerBorder))
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Lock Screen Mode", color = specs.contentPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                        Text("Active PIN passcode: $correctPin", color = specs.contentSecondary, fontSize = 11.sp)
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = { 
+                                newPinInput = ""
+                                showChangePinDialog = true
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = specs.inactiveContainer),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.border(1.dp, specs.inactiveContainerBorder, RoundedCornerShape(10.dp))
+                        ) {
+                            Text("Change PIN", color = specs.contentPrimary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                        
+                        Button(
+                            onClick = { viewModel.activateLock() },
+                            colors = ButtonDefaults.buttonColors(containerColor = ExpenseCoral.copy(alpha = 0.15f)),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.border(1.dp, ExpenseCoral.copy(alpha = 0.3f), RoundedCornerShape(10.dp))
+                        ) {
+                            Text("Lock Now", color = ExpenseCoral, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+            Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(specs.inactiveContainerBorder))
+            Spacer(modifier = Modifier.height(16.dp))
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1842,19 +2415,70 @@ fun SettingsScreen(
             }
         }
 
-        // Soft Reset database options simulation
-        Spacer(modifier = Modifier.height(20.dp))
-        Text(
-            text = "Reset Application to Defaults",
-            color = ExpenseCoral,
-            fontSize = 12.sp,
-            textDecoration = TextDecoration.Underline,
-            modifier = Modifier
-                .align(Alignment.CenterHorizontally)
-                .clickable {
-                    // Simulate wiping db / relaunch callback
+        // 1. Tag Custom Category management Card
+        GlassCard(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("MANAGE TRANSACTION CATEGORIES", color = specs.contentPrimary, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    Text("Customize income/expense category names, icons, and items", color = specs.contentSecondary, fontSize = 11.sp)
                 }
-        )
+                Button(
+                    onClick = { showCategoryManager = true },
+                    colors = ButtonDefaults.buttonColors(containerColor = specs.activeContainer)
+                ) {
+                    Text("Manage", color = specs.onActiveContainer, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+
+        // 2. Setup restore defaults options
+        GlassCard(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("RESTORE DEFAULT SETTINGS", color = specs.contentPrimary, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    Text("Resets all categories, templates, and layouts to default values safely", color = specs.contentSecondary, fontSize = 11.sp)
+                }
+                Button(
+                    onClick = { showRestoreDefaultsConfirm = true },
+                    colors = ButtonDefaults.buttonColors(containerColor = specs.inactiveContainer),
+                    modifier = Modifier.border(1.dp, specs.inactiveContainerBorder, RoundedCornerShape(10.dp))
+                ) {
+                    Text("Restore", color = specs.contentPrimary, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+
+        // Secure Delete All Data option directly after CSV Export
+        GlassCard(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("DELETE ALL APPLICATION DATA", color = ExpenseCoral, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    Text("Wipes all local ledger files, custom vaults, and transactions", color = specs.contentSecondary, fontSize = 11.sp)
+                }
+                Button(
+                    onClick = { 
+                        wipeDataPinInput = ""
+                        wipeDataError = false
+                        showWipeDataConfirm = true 
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = ExpenseCoral)
+                ) {
+                    Text("Delete", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
     }
 
     // Export output bottom sheet alert
@@ -1876,9 +2500,9 @@ fun SettingsScreen(
                         clipboardManager.setText(AnnotatedString(exportStatusMsg ?: ""))
                         viewModel.clearExportMessage()
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = MidnightTertiary)
+                    colors = ButtonDefaults.buttonColors(containerColor = specs.activeContainer)
                 ) {
-                    Text("Copy to Clipboard", color = Color.Black)
+                    Text("Copy to Clipboard", color = specs.onActiveContainer)
                 }
             },
             dismissButton = {
@@ -1886,6 +2510,168 @@ fun SettingsScreen(
                     Text("Dismiss", color = Color.White)
                 }
             }
+        )
+    }
+
+    if (showChangePinDialog) {
+        AlertDialog(
+            onDismissRequest = { showChangePinDialog = false },
+            title = { Text("Customize Passcode PIN", color = specs.contentPrimary, fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        "Set a custom 4-digit security code PIN to restrict app access.",
+                        color = specs.contentSecondary,
+                        fontSize = 13.sp
+                    )
+                    TextField(
+                        value = newPinInput,
+                        onValueChange = { input ->
+                            if (input.all { it.isDigit() } && input.length <= 4) {
+                                newPinInput = input
+                            }
+                        },
+                        label = { Text("New 4-Digit PIN") },
+                        placeholder = { Text("e.g. 2580") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        colors = TextFieldDefaults.colors(
+                            focusedTextColor = specs.contentPrimary,
+                            unfocusedTextColor = specs.contentPrimary,
+                            focusedContainerColor = specs.inactiveContainer,
+                            unfocusedContainerColor = specs.inactiveContainer,
+                            focusedIndicatorColor = specs.activeContainer,
+                            unfocusedIndicatorColor = Color.Transparent
+                        ),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(1.dp, specs.inactiveContainerBorder, RoundedCornerShape(8.dp))
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (newPinInput.length == 4) {
+                            viewModel.saveNewPin(newPinInput)
+                            android.widget.Toast.makeText(context, "Passcode PIN saved successfully!", android.widget.Toast.LENGTH_SHORT).show()
+                            showChangePinDialog = false
+                        } else {
+                            android.widget.Toast.makeText(context, "PIN must be exactly 4 digits!", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = specs.activeContainer)
+                ) {
+                    Text("Save PIN", color = specs.onActiveContainer, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showChangePinDialog = false }) {
+                    Text("Cancel", color = specs.contentSecondary, fontWeight = FontWeight.Bold)
+                }
+            }
+        )
+    }
+
+    if (showWipeDataConfirm) {
+        AlertDialog(
+            onDismissRequest = { showWipeDataConfirm = false },
+            title = { Text("Secured Database Wipe", color = specs.contentPrimary, fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        text = "To authorize deleting all accounts, transactions, and loan data, please enter the App Security PIN (Default PIN: 1234):",
+                        color = specs.contentSecondary,
+                        fontSize = 13.sp
+                    )
+                    TextField(
+                        value = wipeDataPinInput,
+                        onValueChange = { 
+                            wipeDataPinInput = it
+                            wipeDataError = false
+                        },
+                        label = { Text("Enter App PIN") },
+                        isError = wipeDataError,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                        colors = TextFieldDefaults.colors(
+                            focusedTextColor = specs.contentPrimary,
+                            unfocusedTextColor = specs.contentPrimary,
+                            focusedContainerColor = Color.Transparent,
+                            unfocusedContainerColor = Color.Transparent
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    if (wipeDataError) {
+                        Text(
+                            text = "Incorrect security PIN. Please try again.",
+                            color = ExpenseCoral,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (wipeDataPinInput == correctPin) {
+                            viewModel.deleteAllData()
+                            showWipeDataConfirm = false
+                            wipeDataPinInput = ""
+                            android.widget.Toast.makeText(context, "All app ledgers and database wiped successfully!", android.widget.Toast.LENGTH_LONG).show()
+                        } else {
+                            wipeDataError = true
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = ExpenseCoral)
+                ) {
+                    Text("Deauthorize & Wipe", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showWipeDataConfirm = false }) {
+                    Text("Cancel", color = specs.contentSecondary, fontWeight = FontWeight.Bold)
+                }
+            }
+        )
+    }
+
+    if (showRestoreDefaultsConfirm) {
+        AlertDialog(
+            onDismissRequest = { showRestoreDefaultsConfirm = false },
+            title = { Text("Restore Settings to Default?", color = specs.contentPrimary, fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    text = "This will restore default category templates, default dashboard configurations and settings.\n\nTransactions, active vaults, and loan history always remain safe and intact.",
+                    color = specs.contentSecondary,
+                    fontSize = 13.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.restoreDefaultSettings()
+                        showRestoreDefaultsConfirm = false
+                        android.widget.Toast.makeText(context, "Default settings and category templates restored successfully!", android.widget.Toast.LENGTH_LONG).show()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = specs.activeContainer)
+                ) {
+                    Text("Restore Defaults", color = specs.onActiveContainer, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRestoreDefaultsConfirm = false }) {
+                    Text("Cancel", color = specs.contentSecondary, fontWeight = FontWeight.Bold)
+                }
+            }
+        )
+    }
+
+    if (showCategoryManager) {
+        CategoryManagerOverlay(
+            viewModel = viewModel,
+            onDismiss = { showCategoryManager = false }
         )
     }
 }
@@ -1952,5 +2738,314 @@ fun CalculatorCompactWidget(viewModel: AureumViewModel) {
                 }
             }
         }
+    }
+}
+
+@Composable
+fun CategoryManagerOverlay(
+    viewModel: AureumViewModel,
+    onDismiss: () -> Unit
+) {
+    val allCategories by viewModel.allCategories.collectAsState()
+    var selectedTypeTab by remember { mutableStateOf("EXPENSE") } // "EXPENSE", "INCOME"
+    val specs = AureumThemeStyles.specs
+
+    // Dialog state
+    var showAddDialog by remember { mutableStateOf(false) }
+    var addCategoryName by remember { mutableStateOf("") }
+    var addCategoryIcon by remember { mutableStateOf("circle") }
+
+    var editingCategory by remember { mutableStateOf<Category?>(null) }
+    var editCategoryName by remember { mutableStateOf("") }
+    var editCategoryIcon by remember { mutableStateOf("") }
+
+    val filteredList = allCategories.filter { it.type == selectedTypeTab }
+
+    // List of Icon options
+    val expenseIcons = listOf("utensils", "shirt", "home", "building", "wifi", "bus", "heart_pulse", "sparkles", "graduation_cap", "gift", "gamepad", "circle")
+    val incomeIcons = listOf("wallet", "hand_coins", "trending_up", "gift", "circle")
+
+    val iconsToChoose = if (selectedTypeTab == "EXPENSE") expenseIcons else incomeIcons
+    val context = androidx.compose.ui.platform.LocalContext.current
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Category Settings", color = specs.contentPrimary, fontWeight = FontWeight.Bold)
+                IconButton(onClick = onDismiss) {
+                    Icon(imageVector = Icons.Default.Close, contentDescription = "Close", tint = specs.contentPrimary)
+                }
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(400.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                // Selector Tabs
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    listOf("EXPENSE", "INCOME").forEach { type ->
+                        val active = selectedTypeTab == type
+                        Button(
+                            onClick = { selectedTypeTab = type },
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (active) specs.activeContainer else specs.inactiveContainer
+                            ),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Text(type, color = if (active) specs.onActiveContainer else specs.contentPrimary, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                // Scrollable List of Categories
+                LazyColumn(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(filteredList) { cat ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(specs.inactiveContainer)
+                                .border(1.dp, specs.inactiveContainerBorder, RoundedCornerShape(12.dp))
+                                .padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                // Category Icon on Left side
+                                Box(
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .clip(CircleShape)
+                                        .background(specs.activeContainer.copy(alpha = 0.15f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    AureumVectorIcon(name = cat.icon, tint = specs.contentPrimary, modifier = Modifier.size(18.dp))
+                                }
+
+                                Column {
+                                    Text(cat.name, color = specs.contentPrimary, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                    if (cat.isDefault) {
+                                        Text("System Category", color = specs.contentSecondary, fontSize = 10.sp)
+                                    }
+                                }
+                            }
+
+                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                // Edit Button (Pencil Icon)
+                                IconButton(
+                                    onClick = {
+                                        editingCategory = cat
+                                        editCategoryName = cat.name
+                                        editCategoryIcon = cat.icon
+                                    },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Edit,
+                                        contentDescription = "Edit",
+                                        tint = specs.contentSecondary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+
+                                // Delete Button (Trash Icon) - Deletable if not "Other" or system categories
+                                if (cat.isEditable && cat.name.lowercase() != "other") {
+                                    IconButton(
+                                        onClick = { viewModel.deleteCategory(cat) },
+                                        modifier = Modifier.size(32.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Delete,
+                                            contentDescription = "Delete",
+                                            tint = ExpenseCoral,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Create category CTA button
+                Button(
+                    onClick = {
+                        addCategoryName = ""
+                        addCategoryIcon = iconsToChoose.first()
+                        showAddDialog = true
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = specs.activeContainer),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("+ Create Custom Category", color = specs.onActiveContainer, fontWeight = FontWeight.Bold)
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Done", color = specs.contentPrimary, fontWeight = FontWeight.Bold)
+            }
+        }
+    )
+
+    // --- ADD CATEGORY DIALOG ---
+    if (showAddDialog) {
+        AlertDialog(
+            onDismissRequest = { showAddDialog = false },
+            title = { Text("Create ${selectedTypeTab.lowercase()} Category", color = specs.contentPrimary, fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    TextField(
+                        value = addCategoryName,
+                        onValueChange = { addCategoryName = it },
+                        label = { Text("Category Name") },
+                        colors = TextFieldDefaults.colors(
+                            focusedTextColor = specs.contentPrimary,
+                            unfocusedTextColor = specs.contentPrimary,
+                            focusedContainerColor = Color.Transparent,
+                            unfocusedContainerColor = Color.Transparent
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Text("SELECT ICON", color = specs.contentSecondary, fontWeight = FontWeight.Bold, fontSize = 10.sp)
+
+                    // Icons Picker Grid
+                    androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
+                        columns = androidx.compose.foundation.lazy.grid.GridCells.Fixed(5),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.height(130.dp)
+                    ) {
+                        items(count = iconsToChoose.size) { index ->
+                            val iconName = iconsToChoose[index]
+                            val selected = addCategoryIcon == iconName
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(if (selected) specs.activeContainer else specs.inactiveContainer)
+                                    .border(2.dp, if (selected) specs.contentPrimary else Color.Transparent, RoundedCornerShape(8.dp))
+                                    .clickable { addCategoryIcon = iconName }
+                                    .padding(8.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                AureumVectorIcon(name = iconName, tint = if (selected) specs.onActiveContainer else specs.contentPrimary, modifier = Modifier.size(18.dp))
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (addCategoryName.isNotBlank()) {
+                            viewModel.addCategory(addCategoryName, addCategoryIcon, selectedTypeTab)
+                            showAddDialog = false
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = specs.activeContainer)
+                ) {
+                    Text("Create", color = specs.onActiveContainer, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAddDialog = false }) {
+                    Text("Cancel", color = specs.contentSecondary, fontWeight = FontWeight.Bold)
+                }
+            }
+        )
+    }
+
+    // --- EDIT CATEGORY DIALOG ---
+    val currentEditing = editingCategory
+    if (currentEditing != null) {
+        val targetCat = currentEditing
+        AlertDialog(
+            onDismissRequest = { editingCategory = null },
+            title = { Text("Edit Category", color = specs.contentPrimary, fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    TextField(
+                        value = editCategoryName,
+                        onValueChange = { editCategoryName = it },
+                        label = { Text("Category Name") },
+                        colors = TextFieldDefaults.colors(
+                            focusedTextColor = specs.contentPrimary,
+                            unfocusedTextColor = specs.contentPrimary,
+                            focusedContainerColor = Color.Transparent,
+                            unfocusedContainerColor = Color.Transparent
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Text("SELECT ICON", color = specs.contentSecondary, fontWeight = FontWeight.Bold, fontSize = 10.sp)
+
+                    // Icons Picker Grid
+                    androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
+                        columns = androidx.compose.foundation.lazy.grid.GridCells.Fixed(5),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.height(130.dp)
+                    ) {
+                        items(count = iconsToChoose.size) { index ->
+                            val iconName = iconsToChoose[index]
+                            val selected = editCategoryIcon == iconName
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(if (selected) specs.activeContainer else specs.inactiveContainer)
+                                    .border(2.dp, if (selected) specs.contentPrimary else Color.Transparent, RoundedCornerShape(8.dp))
+                                    .clickable { editCategoryIcon = iconName }
+                                    .padding(8.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                AureumVectorIcon(name = iconName, tint = if (selected) specs.onActiveContainer else specs.contentPrimary, modifier = Modifier.size(18.dp))
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (editCategoryName.isNotBlank()) {
+                            viewModel.updateCategory(targetCat.copy(name = editCategoryName, icon = editCategoryIcon))
+                            editingCategory = null
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = specs.activeContainer)
+                ) {
+                    Text("Save", color = specs.onActiveContainer, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { editingCategory = null }) {
+                    Text("Cancel", color = specs.contentSecondary, fontWeight = FontWeight.Bold)
+                }
+            }
+        )
     }
 }

@@ -6,13 +6,35 @@ import kotlinx.coroutines.flow.Flow
 class AureumRepository(
     private val accountDao: AccountDao,
     private val transactionDao: TransactionDao,
-    private val loanDao: LoanDao
+    private val loanDao: LoanDao,
+    private val categoryDao: CategoryDao
 ) {
     val allAccounts: Flow<List<Account>> = accountDao.getAllAccountsFlow()
     val allTransactions: Flow<List<Transaction>> = transactionDao.getAllTransactionsFlow()
     val allLoans: Flow<List<Loan>> = loanDao.getAllLoansFlow()
+    val allCategories: Flow<List<Category>> = categoryDao.getAllCategoriesFlow()
 
     suspend fun getAccount(id: Int): Account? = accountDao.getAccountById(id)
+
+    suspend fun insertCategory(category: Category) {
+        categoryDao.insertCategory(category)
+    }
+
+    suspend fun updateCategory(category: Category) {
+        // Safe rename if needed:
+        // We can rename categories. Any transactions referencing old name should also be renamed.
+        categoryDao.updateCategory(category)
+    }
+
+    suspend fun deleteCategory(category: Category) {
+        // Re-assign transactions belonging to this category to "Other"
+        transactionDao.reassignTransactionsCategory(category.name, "Other")
+        categoryDao.deleteCategory(category)
+    }
+
+    suspend fun clearAllCategories() {
+        categoryDao.clearCategories()
+    }
 
     suspend fun insertAccount(account: Account) {
         accountDao.insertAccount(account)
@@ -43,10 +65,10 @@ class AureumRepository(
                     if (transaction.toAccountId != null) {
                         val destinationAccount = accountDao.getAccountById(transaction.toAccountId)
                         if (destinationAccount != null) {
-                            // Deduct from source
-                            val updatedSource = account.copy(balance = account.balance - transaction.amount)
+                            // Deduct the transfer amount plus fee from source
+                            val updatedSource = account.copy(balance = account.balance - transaction.amount - transaction.fee)
                             accountDao.insertAccount(updatedSource)
-                            // Add to destination
+                            // Add the transfer amount to destination
                             val updatedDestination = destinationAccount.copy(balance = destinationAccount.balance + transaction.amount)
                             accountDao.insertAccount(updatedDestination)
                         }
@@ -74,8 +96,8 @@ class AureumRepository(
                     if (transaction.toAccountId != null) {
                         val destinationAccount = accountDao.getAccountById(transaction.toAccountId)
                         if (destinationAccount != null) {
-                            // Refund source
-                            val updatedSource = account.copy(balance = account.balance + transaction.amount)
+                            // Refund source including fee
+                            val updatedSource = account.copy(balance = account.balance + transaction.amount + transaction.fee)
                             accountDao.insertAccount(updatedSource)
                             // Revert destination
                             val updatedDestination = destinationAccount.copy(balance = destinationAccount.balance - transaction.amount)
@@ -98,5 +120,12 @@ class AureumRepository(
 
     suspend fun deleteLoanById(id: Int) {
         loanDao.deleteLoanById(id)
+    }
+
+    suspend fun clearAllTables() {
+        accountDao.clearAccounts()
+        transactionDao.clearTransactions()
+        loanDao.clearLoans()
+        categoryDao.clearCategories()
     }
 }

@@ -248,6 +248,263 @@ fun AureumVectorIcon(
                 drawLine(color = tint, start = Offset(w * 0.1f, h * 0.7f), end = Offset(w * 0.9f, h * 0.7f), strokeWidth = strokeWidth)
                 drawCircle(color = tint, center = Offset(w * 0.7f, h * 0.7f), radius = w * 0.10f)
             }
+            "wallet", "salary" -> {
+                // Wallet shape with flap
+                drawRoundRect(
+                    color = tint,
+                    topLeft = Offset(w * 0.12f, h * 0.25f),
+                    size = Size(w * 0.76f, h * 0.52f),
+                    cornerRadius = CornerRadius(w * 0.08f, h * 0.08f),
+                    style = Stroke(width = strokeWidth)
+                )
+                // Flap
+                drawPath(
+                    path = Path().apply {
+                        moveTo(w * 0.5f, h * 0.38f)
+                        lineTo(w * 0.78f, h * 0.38f)
+                        lineTo(w * 0.78f, h * 0.64f)
+                        lineTo(w * 0.5f, h * 0.64f)
+                        close()
+                    },
+                    color = tint,
+                    style = Stroke(width = strokeWidth)
+                )
+                drawCircle(color = tint, center = Offset(w * 0.64f, h * 0.51f), radius = w * 0.04f)
+            }
+            "hand_coins", "allowance" -> {
+                // Friendly hand holding coin representations
+                drawCircle(color = tint, center = Offset(w * 0.5f, h * 0.28f), radius = w * 0.12f, style = Stroke(width = strokeWidth))
+                drawCircle(color = tint, center = Offset(w * 0.35f, h * 0.34f), radius = w * 0.1f, style = Stroke(width = strokeWidth))
+                // Simple open platform line (hand)
+                drawLine(color = tint, start = Offset(w * 0.18f, h * 0.68f), end = Offset(w * 0.82f, h * 0.68f), strokeWidth = strokeWidth)
+                drawLine(color = tint, start = Offset(w * 0.18f, h * 0.68f), end = Offset(w * 0.34f, h * 0.82f), strokeWidth = strokeWidth)
+            }
+            "trending_up", "business_profit" -> {
+                // Zigzag trend up arrow
+                val path = Path().apply {
+                    moveTo(w * 0.15f, h * 0.75f)
+                    lineTo(w * 0.42f, h * 0.52f)
+                    lineTo(w * 0.62f, h * 0.64f)
+                    lineTo(w * 0.85f, h * 0.32f)
+                }
+                drawPath(path = path, color = tint, style = Stroke(width = strokeWidth))
+                // Arrow tip
+                drawLine(color = tint, start = Offset(w * 0.64f, h * 0.32f), end = Offset(w * 0.85f, h * 0.32f), strokeWidth = strokeWidth)
+                drawLine(color = tint, start = Offset(w * 0.85f, h * 0.32f), end = Offset(w * 0.85f, h * 0.54f), strokeWidth = strokeWidth)
+            }
+            "gift", "bonus" -> {
+                // Gift box and ribbon
+                drawRoundRect(
+                    color = tint,
+                    topLeft = Offset(w * 0.18f, h * 0.36f),
+                    size = Size(w * 0.64f, h * 0.52f),
+                    cornerRadius = CornerRadius(w * 0.05f),
+                    style = Stroke(width = strokeWidth)
+                )
+                // Ribbon lines
+                drawLine(color = tint, start = Offset(w * 0.5f, h * 0.36f), end = Offset(w * 0.5f, h * 0.88f), strokeWidth = strokeWidth)
+                drawLine(color = tint, start = Offset(w * 0.18f, h * 0.62f), end = Offset(w * 0.82f, h * 0.62f), strokeWidth = strokeWidth)
+                // Bow loops
+                drawCircle(color = tint, center = Offset(w * 0.42f, h * 0.28f), radius = w * 0.08f, style = Stroke(width = strokeWidth))
+                drawCircle(color = tint, center = Offset(w * 0.58f, h * 0.28f), radius = w * 0.08f, style = Stroke(width = strokeWidth))
+            }
+            "circle", "other" -> {
+                drawCircle(
+                    color = tint,
+                    center = Offset(w * 0.5f, h * 0.5f),
+                    radius = w * 0.28f,
+                    style = Stroke(width = strokeWidth)
+                )
+            }
+            "utensils", "food" -> {
+                // Utensils base
+                drawArc(
+                    color = tint,
+                    startAngle = 0f,
+                    sweepAngle = 180f,
+                    useCenter = false,
+                    topLeft = Offset(w * 0.18f, h * 0.24f),
+                    size = Size(w * 0.3f, h * 0.26f),
+                    style = Stroke(width = strokeWidth)
+                )
+                drawLine(color = tint, start = Offset(w * 0.33f, h * 0.44f), end = Offset(w * 0.33f, h * 0.82f), strokeWidth = strokeWidth)
+                drawLine(color = tint, start = Offset(w * 0.24f, h * 0.14f), end = Offset(w * 0.24f, h * 0.28f), strokeWidth = strokeWidth)
+                drawLine(color = tint, start = Offset(w * 0.33f, h * 0.14f), end = Offset(w * 0.33f, h * 0.28f), strokeWidth = strokeWidth)
+                drawLine(color = tint, start = Offset(w * 0.42f, h * 0.14f), end = Offset(w * 0.42f, h * 0.28f), strokeWidth = strokeWidth)
+                
+                // Knife
+                val kPath = Path().apply {
+                    moveTo(w * 0.68f, h * 0.16f)
+                    quadraticBezierTo(w * 0.78f, h * 0.24f, w * 0.68f, h * 0.5f)
+                    lineTo(w * 0.68f, h * 0.82f)
+                }
+                drawPath(path = kPath, color = tint, style = Stroke(width = strokeWidth))
+            }
+            "shirt", "apparel" -> {
+                val sPath = Path().apply {
+                    moveTo(w * 0.34f, h * 0.22f)
+                    lineTo(w * 0.22f, h * 0.34f)
+                    lineTo(w * 0.12f, h * 0.31f)
+                    lineTo(w * 0.22f, h * 0.56f)
+                    lineTo(w * 0.32f, h * 0.51f)
+                    lineTo(w * 0.32f, h * 0.84f)
+                    lineTo(w * 0.68f, h * 0.84f)
+                    lineTo(w * 0.68f, h * 0.51f)
+                    lineTo(w * 0.78f, h * 0.56f)
+                    lineTo(w * 0.88f, h * 0.31f)
+                    lineTo(w * 0.78f, h * 0.34f)
+                    lineTo(w * 0.66f, h * 0.22f)
+                    quadraticBezierTo(w * 0.5f, h * 0.34f, w * 0.34f, h * 0.22f)
+                    close()
+                }
+                drawPath(path = sPath, color = tint, style = Stroke(width = strokeWidth))
+            }
+            "home", "house" -> {
+                // Roof
+                val rPath = Path().apply {
+                    moveTo(w * 0.5f, h * 0.15f)
+                    lineTo(w * 0.86f, h * 0.45f)
+                    lineTo(w * 0.14f, h * 0.45f)
+                    close()
+                }
+                drawPath(path = rPath, color = tint)
+                // Frame
+                drawRect(
+                    color = tint,
+                    topLeft = Offset(w * 0.22f, h * 0.45f),
+                    size = Size(w * 0.56f, h * 0.39f),
+                    style = Stroke(width = strokeWidth)
+                )
+                // Door
+                drawRect(
+                    color = tint,
+                    topLeft = Offset(w * 0.42f, h * 0.64f),
+                    size = Size(w * 0.16f, h * 0.2f)
+                )
+            }
+            "building", "rent" -> {
+                // High-rise building
+                drawRect(
+                    color = tint,
+                    topLeft = Offset(w * 0.25f, h * 0.16f),
+                    size = Size(w * 0.5f, h * 0.7f),
+                    style = Stroke(width = strokeWidth)
+                )
+                // Door
+                drawRect(color = tint, topLeft = Offset(w * 0.44f, h * 0.72f), size = Size(w * 0.12f, h * 0.14f))
+                // Windows
+                drawCircle(color = tint, center = Offset(w * 0.38f, h * 0.3f), radius = w * 0.04f)
+                drawCircle(color = tint, center = Offset(w * 0.62f, h * 0.3f), radius = w * 0.04f)
+                drawCircle(color = tint, center = Offset(w * 0.38f, h * 0.45f), radius = w * 0.04f)
+                drawCircle(color = tint, center = Offset(w * 0.62f, h * 0.45f), radius = w * 0.04f)
+                drawCircle(color = tint, center = Offset(w * 0.38f, h * 0.6f), radius = w * 0.04f)
+                drawCircle(color = tint, center = Offset(w * 0.62f, h * 0.6f), radius = w * 0.04f)
+            }
+            "wifi", "internet_bill" -> {
+                // Dot
+                drawCircle(color = tint, center = Offset(w * 0.5f, h * 0.78f), radius = w * 0.07f)
+                // Arc 1
+                drawArc(
+                    color = tint,
+                    startAngle = 210f,
+                    sweepAngle = 120f,
+                    useCenter = false,
+                    topLeft = Offset(w * 0.34f, h * 0.52f),
+                    size = Size(w * 0.32f, h * 0.32f),
+                    style = Stroke(width = strokeWidth)
+                )
+                // Arc 2
+                drawArc(
+                    color = tint,
+                    startAngle = 210f,
+                    sweepAngle = 120f,
+                    useCenter = false,
+                    topLeft = Offset(w * 0.18f, h * 0.32f),
+                    size = Size(w * 0.64f, h * 0.64f),
+                    style = Stroke(width = strokeWidth)
+                )
+            }
+            "bus", "transport" -> {
+                drawRoundRect(
+                    color = tint,
+                    topLeft = Offset(w * 0.15f, h * 0.24f),
+                    size = Size(w * 0.7f, h * 0.48f),
+                    cornerRadius = CornerRadius(w * 0.06f),
+                    style = Stroke(width = strokeWidth)
+                )
+                // Windows line
+                drawLine(color = tint, start = Offset(w * 0.15f, h * 0.45f), end = Offset(w * 0.85f, h * 0.45f), strokeWidth = strokeWidth)
+                drawLine(color = tint, start = Offset(w * 0.5f, h * 0.24f), end = Offset(w * 0.5f, h * 0.45f), strokeWidth = strokeWidth)
+                // Wheels
+                drawCircle(color = tint, center = Offset(w * 0.32f, h * 0.76f), radius = w * 0.09f)
+                drawCircle(color = tint, center = Offset(w * 0.68f, h * 0.76f), radius = w * 0.09f)
+            }
+            "heart_pulse", "health" -> {
+                // Heart shape outline
+                val heartPath = Path().apply {
+                    moveTo(w * 0.5f, h * 0.28f)
+                    cubicTo(w * 0.34f, h * 0.12f, w * 0.12f, h * 0.26f, w * 0.12f, h * 0.46f)
+                    cubicTo(w * 0.12f, h * 0.68f, w * 0.34f, h * 0.82f, w * 0.5f, h * 0.9f)
+                    cubicTo(w * 0.66f, h * 0.82f, w * 0.88f, h * 0.68f, w * 0.88f, h * 0.46f)
+                    cubicTo(w * 0.88f, h * 0.26f, w * 0.66f, h * 0.12f, w * 0.5f, h * 0.28f)
+                    close()
+                }
+                drawPath(path = heartPath, color = tint, style = Stroke(width = strokeWidth))
+            }
+            "sparkles", "beauty" -> {
+                // 3 stars
+                fun drawStar(cx: Float, cy: Float, r: Float) {
+                    val p = Path().apply {
+                        moveTo(cx, cy - r)
+                        quadraticBezierTo(cx, cy, cx + r, cy)
+                        quadraticBezierTo(cx, cy, cx, cy + r)
+                        quadraticBezierTo(cx, cy, cx - r, cy)
+                        quadraticBezierTo(cx, cy, cx, cy - r)
+                        close()
+                    }
+                    drawPath(path = p, color = tint)
+                }
+                drawStar(w * 0.48f, h * 0.33f, w * 0.16f)
+                drawStar(w * 0.24f, h * 0.56f, w * 0.10f)
+                drawStar(w * 0.74f, h * 0.52f, w * 0.12f)
+            }
+            "graduation_cap", "education" -> {
+                // Diamond top
+                val dPath = Path().apply {
+                    moveTo(w * 0.5f, h * 0.22f)
+                    lineTo(w * 0.86f, h * 0.42f)
+                    lineTo(w * 0.5f, h * 0.62f)
+                    lineTo(w * 0.14f, h * 0.42f)
+                    close()
+                }
+                drawPath(path = dPath, color = tint)
+                // Cap base under it
+                val bPath = Path().apply {
+                    moveTo(w * 0.28f, h * 0.55f)
+                    lineTo(w * 0.28f, h * 0.72f)
+                    quadraticBezierTo(w * 0.5f, h * 0.88f, w * 0.72f, h * 0.72f)
+                    lineTo(w * 0.72f, h * 0.55f)
+                }
+                drawPath(path = bPath, color = tint, style = Stroke(width = strokeWidth))
+                // Tassel line
+                drawLine(color = tint, start = Offset(w * 0.86f, h * 0.42f), end = Offset(w * 0.88f, h * 0.65f), strokeWidth = strokeWidth * 0.8f)
+                drawCircle(color = tint, center = Offset(w * 0.88f, h * 0.7f), radius = w * 0.04f)
+            }
+            "gamepad", "entertainment" -> {
+                drawRoundRect(
+                    color = tint,
+                    topLeft = Offset(w * 0.12f, h * 0.3f),
+                    size = Size(w * 0.76f, h * 0.42f),
+                    cornerRadius = CornerRadius(w * 0.12f),
+                    style = Stroke(width = strokeWidth)
+                )
+                // D-pad cross on left
+                drawLine(color = tint, start = Offset(w * 0.28f, h * 0.51f), end = Offset(w * 0.44f, h * 0.51f), strokeWidth = strokeWidth)
+                drawLine(color = tint, start = Offset(w * 0.36f, h * 0.43f), end = Offset(w * 0.36f, h * 0.59f), strokeWidth = strokeWidth)
+                // Buttons on right
+                drawCircle(color = tint, center = Offset(w * 0.62f, h * 0.51f), radius = w * 0.045f)
+                drawCircle(color = tint, center = Offset(w * 0.72f, h * 0.51f), radius = w * 0.045f)
+            }
             "add", "plus" -> {
                 drawLine(color = tint, start = Offset(w * 0.5f, h * 0.18f), end = Offset(w * 0.5f, h * 0.82f), strokeWidth = strokeWidth)
                 drawLine(color = tint, start = Offset(w * 0.18f, h * 0.5f), end = Offset(w * 0.82f, h * 0.5f), strokeWidth = strokeWidth)

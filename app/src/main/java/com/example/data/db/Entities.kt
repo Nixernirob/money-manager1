@@ -25,7 +25,8 @@ data class Transaction(
     val note: String,
     val timestamp: Long = System.currentTimeMillis(),
     val receiptPath: String? = null, // image uri string if uploaded
-    val isRecurring: Boolean = false
+    val isRecurring: Boolean = false,
+    val fee: Double = 0.0
 )
 
 @Entity(tableName = "loans")
@@ -40,4 +41,14 @@ data class Loan(
     val emiAmount: Double = 0.0, // monthly EMI if formal
     val direction: String, // "LENT" (Assets), "BORROWED" (Liability)
     val isCompleted: Boolean = false
+)
+
+@Entity(tableName = "categories")
+data class Category(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val name: String,
+    val icon: String, // identifier for vector icon, e.g., "wallet", "gift", "utensils"
+    val type: String, // "INCOME" or "EXPENSE"
+    val isEditable: Boolean = true,
+    val isDefault: Boolean = false
 )

@@ -7,6 +7,7 @@ import com.example.data.db.Account
 import com.example.data.db.AppDatabase
 import com.example.data.db.Loan
 import com.example.data.db.Transaction
+import com.example.data.db.Category
 import com.example.data.repository.AureumRepository
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -17,20 +18,23 @@ import java.util.Locale
 class AureumViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository: AureumRepository
+    private val prefs = application.getSharedPreferences("aureum_prefs", android.content.Context.MODE_PRIVATE)
     
     // Core data flows from repository
     val allAccounts: StateFlow<List<Account>>
     val allTransactions: StateFlow<List<Transaction>>
     val allLoans: StateFlow<List<Loan>>
+    val allCategories: StateFlow<List<Category>>
 
     // Flow matching the active UI screen state
     val activeTab = MutableStateFlow("HOME") // HOME, TRANSACTIONS, STATS, ACCOUNTS, MORE
 
     // Security & Lock settings
-    val isLocked = MutableStateFlow(false) // Whether PIN guard is active
+    val isLocked = MutableStateFlow(false) // Whether App is CURRENTLY locked
+    val isPinGuardEnabled = MutableStateFlow(prefs.getBoolean("pin_guard_enabled", false)) // Whether PIN guard is active
     val pinPromptMode = MutableStateFlow(false) // Pin entering mode
     val pinInput = MutableStateFlow("")
-    val correctPin = MutableStateFlow("1234") // Default unlock PIN
+    val correctPin = MutableStateFlow(prefs.getString("correct_pin", "1234") ?: "1234") // Custom PIN saved
     val isBalanceHidden = MutableStateFlow(false)
     val hiddenAccounts = MutableStateFlow<Set<Int>>(emptySet())
     val secureModeEnabled = MutableStateFlow(false) // Anti-screenshot toggle
@@ -51,11 +55,16 @@ class AureumViewModel(application: Application) : AndroidViewModel(application) 
     val exportMessage = MutableStateFlow<String?>(null)
 
     init {
+        if (isPinGuardEnabled.value) {
+            isLocked.value = true
+        }
+
         val database = AppDatabase.getDatabase(application)
         repository = AureumRepository(
             database.accountDao(),
             database.transactionDao(),
-            database.loanDao()
+            database.loanDao(),
+            database.categoryDao()
         )
 
         allAccounts = repository.allAccounts.stateIn(
@@ -76,13 +85,28 @@ class AureumViewModel(application: Application) : AndroidViewModel(application) 
             initialValue = emptyList()
         )
 
+        allCategories = repository.allCategories.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
+
         // Seed initial mock accounts and loans if database is empty on launch
         viewModelScope.launch {
             allAccounts.first { true } // wait for database check
-            // We use simple collection to check empty state
             repository.allAccounts.take(1).collect { accountsList ->
                 if (accountsList.isEmpty()) {
                     seedDefaultAureumData()
+                }
+            }
+        }
+
+        // Seed default categories
+        viewModelScope.launch {
+            allCategories.first { true }
+            repository.allCategories.take(1).collect { catList ->
+                if (catList.isEmpty()) {
+                    seedDefaultCategories()
                 }
             }
         }
@@ -93,21 +117,21 @@ class AureumViewModel(application: Application) : AndroidViewModel(application) 
         val vault = Account(
             name = "Aureum Vault",
             balance = 124500.0,
-            type = "BANK",
+            type = "ACCOUNTS",
             iconName = "account_balance",
             tintHex = "#c1c5dc" // light purple
         )
         val reserve = Account(
             name = "High-Yield Reserve",
             balance = 85000.0,
-            type = "WALLET",
+            type = "CASH",
             iconName = "savings",
             tintHex = "#bbc4f2" // royal accent
         )
         val metalCard = Account(
             name = "Infinite Metal Card",
             balance = 12450.0,
-            type = "CREDIT",
+            type = "CARD",
             creditLimit = 50000.0,
             iconName = "credit_card",
             tintHex = "#bdc5e7" // secondary premium
@@ -213,7 +237,8 @@ class AureumViewModel(application: Application) : AndroidViewModel(application) 
         note: String,
         timestamp: Long,
         isRecurring: Boolean = false,
-        receiptPath: String? = null
+        receiptPath: String? = null,
+        fee: Double = 0.0
     ) {
         viewModelScope.launch {
             val trans = Transaction(
@@ -225,7 +250,8 @@ class AureumViewModel(application: Application) : AndroidViewModel(application) 
                 note = note,
                 timestamp = timestamp,
                 isRecurring = isRecurring,
-                receiptPath = receiptPath
+                receiptPath = receiptPath,
+                fee = fee
             )
             repository.insertTransaction(trans)
         }
@@ -245,15 +271,100 @@ class AureumViewModel(application: Application) : AndroidViewModel(application) 
                 balance = initialBalance,
                 type = type,
                 creditLimit = creditLimit,
-                iconName = when (type) {
-                    "BANK" -> "account_balance"
-                    "WALLET" -> "savings"
-                    "CREDIT" -> "credit_card"
+                iconName = when (type.uppercase()) {
+                    "ACCOUNTS", "BANK" -> "account_balance"
+                    "CASH", "WALLET" -> "savings"
+                    "CARD", "CREDIT" -> "credit_card"
                     else -> "cash"
                 },
                 tintHex = tintHex
             )
             repository.insertAccount(acc)
+        }
+    }
+
+    fun updateAccount(account: Account) {
+        viewModelScope.launch {
+            repository.updateAccount(account)
+        }
+    }
+
+    fun deleteAccount(account: Account) {
+        viewModelScope.launch {
+            repository.deleteAccount(account)
+        }
+    }
+
+    fun addCategory(name: String, icon: String, type: String) {
+        viewModelScope.launch {
+            repository.insertCategory(Category(name = name, icon = icon, type = type, isEditable = true, isDefault = false))
+        }
+    }
+
+    fun updateCategory(category: Category) {
+        viewModelScope.launch {
+            repository.updateCategory(category)
+        }
+    }
+
+    fun deleteCategory(category: Category) {
+        viewModelScope.launch {
+            repository.deleteCategory(category)
+        }
+    }
+
+    suspend fun seedDefaultCategories() {
+        val incomeDefaults = listOf(
+            Category(name = "Salary", icon = "wallet", type = "INCOME", isEditable = true, isDefault = true),
+            Category(name = "Allowance", icon = "hand_coins", type = "INCOME", isEditable = true, isDefault = true),
+            Category(name = "Business Profit", icon = "trending_up", type = "INCOME", isEditable = true, isDefault = true),
+            Category(name = "Bonus", icon = "gift", type = "INCOME", isEditable = true, isDefault = true),
+            Category(name = "Other", icon = "circle", type = "INCOME", isEditable = false, isDefault = true)
+        )
+        val expenseDefaults = listOf(
+            Category(name = "Food", icon = "utensils", type = "EXPENSE", isEditable = true, isDefault = true),
+            Category(name = "Apparel", icon = "shirt", type = "EXPENSE", isEditable = true, isDefault = true),
+            Category(name = "House", icon = "home", type = "EXPENSE", isEditable = true, isDefault = true),
+            Category(name = "Rent", icon = "building", type = "EXPENSE", isEditable = true, isDefault = true),
+            Category(name = "Internet Bill", icon = "wifi", type = "EXPENSE", isEditable = true, isDefault = true),
+            Category(name = "Transport", icon = "bus", type = "EXPENSE", isEditable = true, isDefault = true),
+            Category(name = "Health", icon = "heart_pulse", type = "EXPENSE", isEditable = true, isDefault = true),
+            Category(name = "Beauty", icon = "sparkles", type = "EXPENSE", isEditable = true, isDefault = true),
+            Category(name = "Education", icon = "graduation_cap", type = "EXPENSE", isEditable = true, isDefault = true),
+            Category(name = "Gift", icon = "gift", type = "EXPENSE", isEditable = true, isDefault = true),
+            Category(name = "Entertainment", icon = "gamepad", type = "EXPENSE", isEditable = true, isDefault = true),
+            Category(name = "Other", icon = "circle", type = "EXPENSE", isEditable = false, isDefault = true)
+        )
+        for (c in incomeDefaults) repository.insertCategory(c)
+        for (c in expenseDefaults) repository.insertCategory(c)
+    }
+
+    fun restoreDefaultSettings() {
+        viewModelScope.launch {
+            repository.clearAllCategories()
+            seedDefaultCategories()
+
+            isPinGuardEnabled.value = false
+            correctPin.value = "1234"
+            isBalanceHidden.value = false
+            hiddenAccounts.value = emptySet()
+            secureModeEnabled.value = false
+            selectedCurrency.value = "৳"
+            isDarkTheme.value = false
+            transactionFilterType.value = "ALL"
+            transactionCategoryFilter.value = "ALL"
+
+            prefs.edit().apply {
+                putBoolean("pin_guard_enabled", false)
+                putString("correct_pin", "1234")
+                apply()
+            }
+        }
+    }
+
+    fun deleteAllData() {
+        viewModelScope.launch {
+            repository.clearAllTables()
         }
     }
 
@@ -295,7 +406,7 @@ class AureumViewModel(application: Application) : AndroidViewModel(application) 
             // Log as a transaction expense/income
             val title = "Repayment: ${loan.borrowerOrLender}"
             // Try to find a matching account to deduct from
-            val defaultAccId = allAccounts.value.firstOrNull { it.type == "BANK" }?.id ?: 1
+            val defaultAccId = allAccounts.value.firstOrNull { it.type == "ACCOUNTS" || it.type == "BANK" }?.id ?: allAccounts.value.firstOrNull()?.id ?: 1
             addTransaction(
                 type = if (loan.direction == "LENT") "INCOME" else "EXPENSE",
                 amount = amountPaid,
@@ -317,7 +428,7 @@ class AureumViewModel(application: Application) : AndroidViewModel(application) 
             repository.updateLoan(updated)
 
             // Auto log the return
-            val defaultAccId = allAccounts.value.firstOrNull { it.type == "BANK" }?.id ?: 1
+            val defaultAccId = allAccounts.value.firstOrNull { it.type == "ACCOUNTS" || it.type == "BANK" }?.id ?: allAccounts.value.firstOrNull()?.id ?: 1
             addTransaction(
                 type = if (loan.direction == "LENT") "INCOME" else "EXPENSE",
                 amount = loan.outstandingAmount,
@@ -359,6 +470,21 @@ class AureumViewModel(application: Application) : AndroidViewModel(application) 
 
     fun activateLock() {
         isLocked.value = true
+    }
+
+    fun saveNewPin(newPin: String) {
+        if (newPin.length == 4) {
+            prefs.edit().putString("correct_pin", newPin).apply()
+            correctPin.value = newPin
+        }
+    }
+
+    fun setPinGuardEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean("pin_guard_enabled", enabled).apply()
+        isPinGuardEnabled.value = enabled
+        if (enabled && (correctPin.value.isBlank() || correctPin.value == "1234")) {
+            saveNewPin("1234")
+        }
     }
 
     // --- Calculator Built-in Logic ---

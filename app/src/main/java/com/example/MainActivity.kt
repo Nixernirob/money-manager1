@@ -276,11 +276,12 @@ data class TabItem(val id: String, val icon: String, val label: String)
 @Composable
 fun AppLockscreenOverlay(viewModel: AureumViewModel) {
     val pinVal by viewModel.pinInput.collectAsState()
+    val specs = AureumThemeStyles.specs
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(BaseMidnightOffset)
+            .background(if (specs.isDark) Color(0xFF0F131E) else Color(0xFFF3F5FA))
             .padding(horizontal = 32.dp),
         contentAlignment = Alignment.Center
     ) {
@@ -294,23 +295,23 @@ fun AppLockscreenOverlay(viewModel: AureumViewModel) {
                     modifier = Modifier
                         .size(64.dp)
                         .clip(CircleShape)
-                        .background(MidnightTertiary.copy(alpha = 0.1f))
-                        .border(1.dp, MidnightTertiary.copy(alpha = 0.2f), CircleShape),
+                        .background(specs.activeContainer.copy(alpha = 0.12f))
+                        .border(1.dp, specs.glassBorderColor, CircleShape),
                     contentAlignment = Alignment.Center
                 ) {
-                    AureumVectorIcon(name = "vault", tint = MidnightTertiary, modifier = Modifier.size(32.dp))
+                    AureumVectorIcon(name = "vault", tint = specs.activeContainer, modifier = Modifier.size(32.dp))
                 }
                 Spacer(modifier = Modifier.height(16.dp))
                 Text(
                     text = "AUREUM SECURE GUARD",
-                    color = Color.White,
+                    color = specs.contentPrimary,
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Bold,
                     letterSpacing = 2.sp
                 )
                 Text(
                     text = "Access protected. Please insert security code",
-                    color = TextSecondary,
+                    color = specs.contentSecondary,
                     fontSize = 11.sp
                 )
             }
@@ -327,9 +328,9 @@ fun AppLockscreenOverlay(viewModel: AureumViewModel) {
                             .size(14.dp)
                             .clip(CircleShape)
                             .background(
-                                if (active) MidnightTertiary else Color.White.copy(alpha = 0.1f)
+                                if (active) specs.activeContainer else specs.inactiveContainer
                             )
-                            .border(1.dp, if (active) MidnightTertiary else Color.Transparent, CircleShape)
+                            .border(1.dp, if (active) specs.activeContainer else specs.inactiveContainerBorder, CircleShape)
                     )
                 }
             }
@@ -355,8 +356,8 @@ fun AppLockscreenOverlay(viewModel: AureumViewModel) {
                                         .weight(1f)
                                         .height(56.dp)
                                         .clip(CircleShape)
-                                        .background(Color.White.copy(alpha = 0.04f))
-                                        .border(1.dp, Color.White.copy(alpha = 0.06f), CircleShape)
+                                        .background(specs.inactiveContainer)
+                                        .border(1.dp, specs.inactiveContainerBorder, CircleShape)
                                         .clickable {
                                             if (d == "CLR") {
                                                 viewModel.clearPinInput()
@@ -368,7 +369,7 @@ fun AppLockscreenOverlay(viewModel: AureumViewModel) {
                                 ) {
                                     Text(
                                         text = d,
-                                        color = if (d == "CLR") ExpenseCoral else Color.White,
+                                        color = if (d == "CLR") ExpenseCoral else specs.contentPrimary,
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 18.sp
                                     )

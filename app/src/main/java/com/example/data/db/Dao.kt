@@ -24,6 +24,9 @@ interface AccountDao {
 
     @Delete
     suspend fun deleteAccount(account: Account)
+
+    @Query("DELETE FROM accounts")
+    suspend fun clearAccounts()
 }
 
 @Dao
@@ -42,6 +45,12 @@ interface TransactionDao {
 
     @Query("DELETE FROM transactions WHERE id = :id")
     suspend fun deleteTransactionById(id: Int)
+
+    @Query("UPDATE transactions SET category = :newCategory WHERE category = :oldCategory")
+    suspend fun reassignTransactionsCategory(oldCategory: String, newCategory: String)
+
+    @Query("DELETE FROM transactions")
+    suspend fun clearTransactions()
 }
 
 @Dao
@@ -57,4 +66,28 @@ interface LoanDao {
 
     @Query("DELETE FROM loans WHERE id = :id")
     suspend fun deleteLoanById(id: Int)
+
+    @Query("DELETE FROM loans")
+    suspend fun clearLoans()
+}
+
+@Dao
+interface CategoryDao {
+    @Query("SELECT * FROM categories ORDER BY id ASC")
+    fun getAllCategoriesFlow(): Flow<List<Category>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertCategory(category: Category): Long
+
+    @Update
+    suspend fun updateCategory(category: Category)
+
+    @Delete
+    suspend fun deleteCategory(category: Category)
+
+    @Query("DELETE FROM categories WHERE id = :id")
+    suspend fun deleteCategoryById(id: Int)
+
+    @Query("DELETE FROM categories")
+    suspend fun clearCategories()
 }
