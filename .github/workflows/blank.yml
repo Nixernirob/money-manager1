@@ -20,27 +20,29 @@ jobs:
     - name: Setup Android SDK
       uses: android-actions/setup-android@v3
 
-    # গ্লোবাল গ্রেডল এনভায়রনমেন্ট সেটআপ করা (যেহেতু gradlew ফাইল মিসিং)
+    # গ্লোবাল গ্রেডল সেটআপ
     - name: Setup Gradle
       uses: gradle/actions/setup-gradle@v4
 
-    # বিল্ড রান করা (gradlew না থাকলে সরাসরি gradle কমান্ড ব্যবহার করবে)
+    # মিসিং debug.keystore ফাইলটি স্বয়ংক্রিয়ভাবে তৈরি করার কমান্ড
+    - name: Generate missing debug.keystore
+      run: |
+        keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+        # যদি মেইন ডিরেক্টরি ছাড়া অন্য কোথাও ফাইলটি খোঁজে, তার জন্য সব জায়গায় কপি করে দেওয়া হলো
+        find . -type d -name "app" -exec cp debug.keystore {} \;
+        cp debug.keystore /home/runner/work/money-manager1/money-manager1/ || true
+
+    # বিল্ড রান করা
     - name: Build with Gradle
       run: |
         GRADLEW_PATH=$(find . -name "gradlew" | head -n 1)
         if [ -n "$GRADLEW_PATH" ]; then
-          echo "Using gradlew wrapper..."
           DIR_PATH=$(dirname "$GRADLEW_PATH")
           cd "$DIR_PATH"
           chmod +x ./gradlew
           ./gradlew assembleDebug
         else
-          echo "gradlew not found. Searching for build.gradle instead..."
           BUILD_GRADLE_PATH=$(find . -name "build.gradle" -o -name "build.gradle.kts" | head -n 1)
-          if [ -z "$BUILD_GRADLE_PATH" ]; then
-            echo "Error: No Android project files found at all!"
-            exit 1
-          fi
           DIR_PATH=$(dirname "$BUILD_GRADLE_PATH")
           cd "$DIR_PATH"
           gradle assembleDebug
@@ -48,7 +50,7 @@ jobs:
       env:
         GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
 
-    # জেনারেট হওয়া APK ফাইল আপলোড করা
+    # তৈরি হওয়া APK ফাইল আপলোড করা
     - name: Upload APK Artifact
       uses: actions/upload-artifact@v4
       with:
