@@ -42,6 +42,8 @@ import com.example.ui.viewmodel.AureumViewModel
 import java.text.SimpleDateFormat
 import java.util.*
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.LocalIndication
@@ -91,13 +93,19 @@ fun DashboardScreen(
 ) {
     val accounts by viewModel.allAccounts.collectAsState()
     val transactions by viewModel.allTransactions.collectAsState()
+    val loans by viewModel.allLoans.collectAsState()
     val isBalanceHidden by viewModel.isBalanceHidden.collectAsState()
     val currency by viewModel.selectedCurrency.collectAsState()
 
-    // Calculate total net worth
-    val totalNetWorth = accounts.sumOf { 
+    var selectedDetailVault by remember { mutableStateOf<Account?>(null) }
+
+    // Calculate total net worth incorporating Formal Loans
+    val accountsNetWorth = accounts.sumOf { 
         if (it.type == "CREDIT") -it.balance else it.balance 
     }
+    val formalLentLoans = loans.filter { it.type == "FORMAL" && it.direction == "LENT" }.sumOf { it.outstandingAmount }
+    val formalBorrowedLoans = loans.filter { it.type == "FORMAL" && it.direction == "BORROWED" }.sumOf { it.outstandingAmount }
+    val totalNetWorth = accountsNetWorth + formalLentLoans - formalBorrowedLoans
 
     val specs = AureumThemeStyles.specs
     val titleTextColor = specs.contentSecondary
@@ -216,7 +224,8 @@ fun DashboardScreen(
                             tintColor = Color(android.graphics.Color.parseColor(acc.tintHex)),
                             numberMask = "•••• ${acc.id + 4239}",
                             isHidden = isBalanceHidden,
-                            currency = currency
+                            currency = currency,
+                            onClick = { selectedDetailVault = acc }
                         )
                     }
                 }
@@ -242,7 +251,9 @@ fun DashboardScreen(
                         it.type == "EXPENSE" && it.timestamp > System.currentTimeMillis() - 86400000 
                     }.sumOf { it.amount }
 
-                    val alerts = if (todaySpent > 20000) "Limit reached" else "Secure safe"
+                    val monthlyExpense = transactions.filter {
+                        it.type == "EXPENSE" && it.timestamp > System.currentTimeMillis() - 30L * 24 * 60 * 60 * 1000
+                    }.sumOf { it.amount }
 
                     InsightChip(
                         label = "Spent Today",
@@ -251,9 +262,9 @@ fun DashboardScreen(
                         modifier = Modifier.weight(1f)
                     )
                     InsightChip(
-                        label = "Alert Status",
-                        value = alerts,
-                        accentColor = AssetGreen,
+                        label = "Monthly Spent",
+                        value = "$currency${monthlyExpense.toInt()}",
+                        accentColor = specs.activeContainer,
                         modifier = Modifier.weight(1f)
                     )
                 }
@@ -307,6 +318,117 @@ fun DashboardScreen(
             }
         }
     }
+
+    // Vault/Account Detail Modal (Slide-up style)
+    if (selectedDetailVault != null) {
+        val account = selectedDetailVault!!
+        
+        AlertDialog(
+            onDismissRequest = { selectedDetailVault = null },
+            title = {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(account.name, color = specs.contentPrimary, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                        Text(
+                            text = "Vault Balance: $currency${String.format(Locale.getDefault(), "%,.2f", account.balance)}",
+                            color = specs.contentSecondary,
+                            fontSize = 13.sp,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+                    IconButton(onClick = { selectedDetailVault = null }) {
+                        Text("✕", color = specs.contentPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            },
+            text = {
+                var filterType by remember { mutableStateOf("ALL") } // ALL, INCOME, EXPENSE, TRANSFER
+                
+                val filteredVaultTransactions = transactions.filter {
+                    (it.accountId == account.id || it.toAccountId == account.id) &&
+                    (filterType == "ALL" || it.type == filterType)
+                }
+                
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 400.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    // Filters row
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf("ALL", "INCOME", "EXPENSE", "TRANSFER").forEach { fType ->
+                            val active = filterType == fType
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(if (active) specs.activeContainer else specs.inactiveContainer)
+                                    .clickable { filterType = fType }
+                                    .padding(vertical = 6.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = when(fType) {
+                                        "ALL" -> "All"
+                                        "INCOME" -> "Income"
+                                        "EXPENSE" -> "Expense"
+                                        else -> "Transfer"
+                                    },
+                                    color = if (active) specs.onActiveContainer else specs.contentPrimary,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                    
+                    Spacer(modifier = Modifier.height(4.dp))
+                    
+                    Text(
+                        text = "TRANSACTIONS FOR THIS VAULT",
+                        color = specs.contentSecondary,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.sp
+                    )
+                    
+                    if (filteredVaultTransactions.isEmpty()) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(120.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("No matching transactions in this vault.", color = specs.contentSecondary, fontSize = 12.sp)
+                        }
+                    } else {
+                        LazyColumn(
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxWidth().weight(1f)
+                        ) {
+                            items(filteredVaultTransactions) { tr ->
+                                TransactionRow(
+                                    transaction = tr,
+                                    currency = currency,
+                                    viewModel = viewModel,
+                                    onDelete = { viewModel.deleteTransaction(tr) }
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {}
+        )
+    }
 }
 
 @Composable
@@ -317,7 +439,8 @@ fun AccountSwipeCard(
     tintColor: Color,
     numberMask: String,
     isHidden: Boolean,
-    currency: String
+    currency: String,
+    onClick: (() -> Unit)? = null
 ) {
     val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     
@@ -359,6 +482,7 @@ fun AccountSwipeCard(
             .width(260.dp)
             .height(150.dp)
             .clip(RoundedCornerShape(20.dp))
+            .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier)
             .background(
                 Brush.linearGradient(
                     colors = cardBackgroundColors
@@ -485,8 +609,8 @@ fun TransactionRow(
     viewModel: AureumViewModel,
     onDelete: () -> Unit
 ) {
-    var showMoreActions by remember { mutableStateOf(false) }
-    var showReceiptDialog by remember { mutableStateOf(false) }
+    var showDetailPopup by remember { mutableStateOf(false) }
+    var showFullImage by remember { mutableStateOf(false) }
     val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     val specs = AureumThemeStyles.specs
 
@@ -538,7 +662,7 @@ fun TransactionRow(
             .clickable(
                 interactionSource = interactionSource,
                 indication = LocalIndication.current,
-                onClick = { showMoreActions = !showMoreActions }
+                onClick = { showDetailPopup = true }
             )
             .padding(16.dp)
     ) {
@@ -560,7 +684,7 @@ fun TransactionRow(
                 ) {
                     AureumVectorIcon(
                         name = categoryIcon ?: when (transaction.category.lowercase()) {
-                            "housing" -> "bank"
+                            "housing", "house" -> "home"
                             "retail", "shopping" -> "retail"
                             "dining", "food" -> "dining"
                             "salary" -> "income"
@@ -619,105 +743,248 @@ fun TransactionRow(
                 )
             }
         }
+    }
 
-        AnimatedVisibility(
-            visible = showMoreActions,
-            enter = expandVertically() + fadeIn(),
-            exit = shrinkVertically() + fadeOut()
+    // Modal Details Dialog
+    if (showDetailPopup) {
+        val accounts by viewModel.allAccounts.collectAsState()
+        val accountName = accounts.find { it.id == transaction.accountId }?.name ?: "Unknown Account"
+        val toAccountName = if (transaction.toAccountId != null) {
+            accounts.find { it.id == transaction.toAccountId }?.name
+        } else null
+
+        androidx.compose.ui.window.Dialog(
+            onDismissRequest = { showDetailPopup = false },
+            properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
         ) {
-            Column {
-                Spacer(modifier = Modifier.height(12.dp))
-                Divider(color = dividerColor)
-                Spacer(modifier = Modifier.height(8.dp))
-                Row(
+            var animateIn by remember { mutableStateOf(false) }
+            LaunchedEffect(Unit) {
+                animateIn = true
+            }
+            val popupScale by animateFloatAsState(
+                targetValue = if (animateIn) 1f else 0.85f,
+                animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow),
+                label = "detail_scale"
+            )
+            val popupAlpha by animateFloatAsState(
+                targetValue = if (animateIn) 1f else 0f,
+                animationSpec = tween(durationMillis = 200),
+                label = "detail_alpha"
+            )
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(0.88f)
+                    .graphicsLayer {
+                        scaleX = popupScale
+                        scaleY = popupScale
+                        this.alpha = popupAlpha
+                    }
+                    .aureumGlass(shape = RoundedCornerShape(24.dp))
+                    .padding(20.dp)
+            ) {
+                Column(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    if (transaction.receiptPath != null) {
+                    // Header
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         Text(
-                            text = "📎 View Attachment",
-                            color = if (isDark) MidnightPrimary else Color(0xFF005AC1),
-                            fontSize = 12.sp,
+                            text = "TRANSACTION DETAILS",
+                            color = specs.contentSecondary,
+                            fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
-                            textDecoration = TextDecoration.Underline,
-                            modifier = Modifier.clickable { showReceiptDialog = true }
+                            letterSpacing = 1.5.sp
                         )
-                    } else {
-                        Spacer(modifier = Modifier.width(1.dp))
+                        IconButton(onClick = { showDetailPopup = false }) {
+                            Text("✕", color = specs.contentPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                        }
                     }
 
-                    Button(
-                        onClick = onDelete,
-                        colors = ButtonDefaults.buttonColors(containerColor = ExpenseCoral.copy(alpha = 0.2f)),
-                        shape = RoundedCornerShape(8.dp),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                        modifier = Modifier.height(32.dp)
+                    // Divider
+                    Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(dividerColor))
+
+                    // Name / Note
+                    Text(
+                        text = transaction.note.ifBlank { "Untitled ${transaction.category}" },
+                        color = specs.contentPrimary,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    // Amount
+                    Text(
+                        text = if (transaction.type == "TRANSFER") {
+                            "⇄ $currency${String.format(Locale.getDefault(), "%,.2f", transaction.amount)}"
+                        } else {
+                            "${if (transaction.type == "INCOME") "+" else "-"}$currency${String.format(Locale.getDefault(), "%,.2f", transaction.amount)}"
+                        },
+                        color = amountColor,
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace
+                    )
+
+                    // Meta Info List
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Box(
+                                modifier = Modifier
+                                    .size(24.dp)
+                                    .clip(CircleShape)
+                                    .background(avatarBg),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                AureumVectorIcon(
+                                    name = categoryIcon ?: when (transaction.category.lowercase()) {
+                                        "housing", "house" -> "home"
+                                        "retail", "shopping" -> "retail"
+                                        "dining", "food" -> "dining"
+                                        "salary" -> "income"
+                                        "internal", "loans" -> "transfer"
+                                        else -> if (transaction.type == "TRANSFER") "transfer" else "expense"
+                                    },
+                                    tint = avatarIconTint,
+                                    modifier = Modifier.size(12.dp)
+                                )
+                            }
+                            Text(
+                                text = "Category: ${transaction.category}",
+                                color = specs.contentPrimary,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("📅", fontSize = 14.sp)
+                            Text(
+                                text = SimpleDateFormat("MMMM dd, yyyy 'at' HH:mm", Locale.getDefault()).format(Date(transaction.timestamp)),
+                                color = specs.contentSecondary,
+                                fontSize = 13.sp
+                            )
+                        }
+
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("💼", fontSize = 14.sp)
+                            Text(
+                                text = if (transaction.type == "TRANSFER") {
+                                    "From $accountName to ${toAccountName ?: "Unknown"}"
+                                } else {
+                                    "Vault: $accountName"
+                                },
+                                color = specs.contentSecondary,
+                                fontSize = 13.sp
+                            )
+                        }
+                    }
+
+                    // Attachment Preview
+                    if (transaction.receiptPath != null) {
+                        Text(
+                            text = "ATTACHMENT PREVIEW",
+                            color = specs.contentSecondary,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.sp
+                        )
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(140.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color.Black.copy(alpha = 0.05f))
+                                .border(1.dp, rowBorderColor, RoundedCornerShape(12.dp))
+                                .clickable { showFullImage = true },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            AsyncImage(
+                                model = transaction.receiptPath,
+                                contentDescription = "Receipt Attachment Preview",
+                                modifier = Modifier.fillMaxSize(),
+                                contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .background(Color.Black.copy(alpha = 0.25f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text("🔍 Click to Expand", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+
+                    // Bottom Row: Action Buttons
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        Text("Delete", color = ExpenseCoral, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        // Edit Button
+                        Button(
+                            onClick = {
+                                viewModel.editingTransaction.value = transaction
+                                showDetailPopup = false
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = specs.activeContainer),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("Edit", color = specs.onActiveContainer, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        }
+
+                        // Delete Button
+                        Button(
+                            onClick = {
+                                onDelete()
+                                showDetailPopup = false
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = ExpenseCoral.copy(alpha = 0.2f)),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("Delete", color = ExpenseCoral, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        }
                     }
                 }
             }
         }
     }
 
-    // Modal Receipt Image Viewer Dialog
-    if (showReceiptDialog && transaction.receiptPath != null) {
-        AlertDialog(
-            onDismissRequest = { showReceiptDialog = false },
-            title = {
-                Text(
-                    text = "Transaction Attachment",
-                    color = noteColor,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 16.sp
+    // Modal Receipt Fullscreen Image Viewer Dialog
+    if (showFullImage && transaction.receiptPath != null) {
+        androidx.compose.ui.window.Dialog(
+            onDismissRequest = { showFullImage = false },
+            properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.9f))
+                    .clickable { showFullImage = false },
+                contentAlignment = Alignment.Center
+            ) {
+                AsyncImage(
+                    model = transaction.receiptPath,
+                    contentDescription = "Receipt Expanded View",
+                    modifier = Modifier.fillMaxWidth(0.95f).fillMaxHeight(0.85f),
+                    contentScale = androidx.compose.ui.layout.ContentScale.Fit
                 )
-            },
-            text = {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                IconButton(
+                    onClick = { showFullImage = false },
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(24.dp)
+                        .background(Color.White.copy(alpha = 0.2f), CircleShape)
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(280.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(Color.Black.copy(alpha = 0.05f))
-                            .border(1.dp, rowBorderColor, RoundedCornerShape(12.dp))
-                    ) {
-                        AsyncImage(
-                            model = transaction.receiptPath,
-                            contentDescription = "Receipt Attachment",
-                            modifier = Modifier.fillMaxSize(),
-                            contentScale = androidx.compose.ui.layout.ContentScale.Fit
-                        )
-                    }
-                    if (transaction.note.isNotBlank()) {
-                        Text(
-                            text = transaction.note,
-                            color = noteColor,
-                            fontSize = 13.sp,
-                            textAlign = TextAlign.Center
-                        )
-                    }
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = { showReceiptDialog = false },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (isDark) specs.activeContainer else specs.inactiveContainer
-                    )
-                ) {
-                    Text(
-                        "Close",
-                        color = if (isDark) specs.onActiveContainer else specs.contentPrimary,
-                        fontWeight = FontWeight.Bold
-                    )
+                    Text("✕", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                 }
             }
-        )
+        }
     }
 }
 
@@ -832,8 +1099,8 @@ fun TransactionsScreen(
             }
         }
 
-        // Heatmap Calendar visualization
-        CalendarHeatmap(transactions = transactions)
+        // Expense distribution Animated Pie Chart visualization
+        ExpenseDistributionPieChart(transactions = transactions, viewModel = viewModel)
 
         // List
         LazyColumn(
@@ -867,17 +1134,20 @@ fun TransactionsScreen(
 }
 
 @Composable
-fun CalendarHeatmap(transactions: List<Transaction>) {
-    // Renders a high-fidelity color heatmap grid representing transactions logged daily over past 4 weeks
-    val daysCount = 28
-    val itemsMap = remember(transactions) {
-        val formatter = SimpleDateFormat("yyyyMMdd", Locale.US)
-        val statsMap = mutableMapOf<String, Int>()
-        transactions.forEach {
-            val key = formatter.format(Date(it.timestamp))
-            statsMap[key] = (statsMap[key] ?: 0) + 1
-        }
-        statsMap
+fun ExpenseDistributionPieChart(transactions: List<Transaction>, viewModel: AureumViewModel) {
+    val expenseTransactions = remember(transactions) {
+        transactions.filter { it.type == "EXPENSE" }
+    }
+    
+    val categoryTotals = remember(expenseTransactions) {
+        expenseTransactions.groupBy { it.category }
+            .mapValues { (_, list) -> list.sumOf { it.amount } }
+            .toList()
+            .sortedByDescending { it.second }
+    }
+    
+    val totalExpense = remember(categoryTotals) {
+        categoryTotals.sumOf { it.second }
     }
 
     val specs = AureumThemeStyles.specs
@@ -890,49 +1160,97 @@ fun CalendarHeatmap(transactions: List<Transaction>) {
             .padding(16.dp)
     ) {
         Text(
-            text = "ACTIVITY HEATMAP",
+            text = "EXPENSE CATEGORY DISTRIBUTION",
             color = TextSecondary,
-            fontSize = 10.sp,
+            fontSize = 11.sp,
             fontWeight = FontWeight.Bold,
             letterSpacing = 1.sp
         )
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(16.dp))
 
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            val calendar = Calendar.getInstance()
-            calendar.add(Calendar.DAY_OF_YEAR, -daysCount + 1)
-            val formatter = SimpleDateFormat("yyyyMMdd", Locale.US)
+        if (totalExpense <= 0.0) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(140.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("No expense data recorded.", color = TextSecondary, fontSize = 12.sp)
+            }
+        } else {
+            var animationTriggered by remember { mutableStateOf(false) }
+            LaunchedEffect(key1 = categoryTotals) {
+                animationTriggered = true
+            }
+            
+            val sweepProgress by animateFloatAsState(
+                targetValue = if (animationTriggered) 1f else 0f,
+                animationSpec = tween(durationMillis = 800, easing = FastOutSlowInEasing),
+                label = "pie_sweep"
+            )
 
-            for (w in 0 until 4) {
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    for (d in 0 until 7) {
-                        val key = formatter.format(calendar.time)
-                        val count = itemsMap[key] ?: 0
-                        val color = when {
-                            count == 0 -> if (isDark) Color.White.copy(alpha = 0.12f) else Color.Black.copy(alpha = 0.08f)
-                            count == 1 -> MidnightPrimary.copy(alpha = 0.45f)
-                            count == 2 -> MidnightPrimary.copy(alpha = 0.75f)
-                            else -> MidnightPrimary // Intense glow
-                        }
-                        calendar.add(Calendar.DAY_OF_YEAR, 1)
+            val colors = listOf(
+                Color(0xFFE57373), Color(0xFFF06292), Color(0xFFBA68C8), Color(0xFF9575CD),
+                Color(0xFF7986CB), Color(0xFF64B5F6), Color(0xFF4FC3F7), Color(0xFF4DD0E1),
+                Color(0xFF4DB6AC), Color(0xFF81C784), Color(0xFFAED581), Color(0xFFFFD54F)
+            )
 
-                        Box(
-                            modifier = Modifier
-                                .size(18.dp)
-                                .clip(RoundedCornerShape(4.dp))
-                                .background(color)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Canvas(
+                    modifier = Modifier.size(110.dp)
+                ) {
+                    var startAngle = -90f
+                    categoryTotals.forEachIndexed { index, (_, amount) ->
+                        val sweepAngle = ((amount / totalExpense) * 360f).toFloat() * sweepProgress
+                        val color = colors[index % colors.size]
+                        drawArc(
+                            color = color,
+                            startAngle = startAngle,
+                            sweepAngle = sweepAngle,
+                            useCenter = false,
+                            style = Stroke(width = 16.dp.toPx(), cap = StrokeCap.Round)
                         )
+                        startAngle += sweepAngle
                     }
                 }
-            }
 
-            Column(modifier = Modifier.padding(start = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("• High Activity", color = MidnightPrimary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                Text("• Low Activity", color = MidnightPrimary.copy(alpha = 0.65f), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.width(16.dp))
+
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(max = 130.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    categoryTotals.forEachIndexed { index, (category, amount) ->
+                        val percent = (amount / totalExpense) * 100
+                        val color = colors[index % colors.size]
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(10.dp)
+                                    .clip(CircleShape)
+                                    .background(color)
+                            )
+                            Text(
+                                text = "$category (${String.format(Locale.getDefault(), "%.1f", percent)}%)",
+                                color = specs.contentPrimary,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
             }
         }
     }
@@ -1493,9 +1811,29 @@ fun LoansScreen(
 ) {
     val loans by viewModel.allLoans.collectAsState()
     val currency by viewModel.selectedCurrency.collectAsState()
+    val specs = AureumThemeStyles.specs
 
     var showFormalLoansMode by remember { mutableStateOf(true) }
-    val specs = AureumThemeStyles.specs
+    var showAddLoanDialog by remember { mutableStateOf(false) }
+
+    // Dialog state variables
+    var borrowerOrLender by remember { mutableStateOf("") }
+    var loanAmountStr by remember { mutableStateOf("") }
+    var interestRateStr by remember { mutableStateOf("") }
+    var emiAmountStr by remember { mutableStateOf("") }
+    var direction by remember { mutableStateOf("BORROWED") } // BORROWED or LENT
+    var notes by remember { mutableStateOf("") }
+    var startDateStr by remember { mutableStateOf(SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())) }
+    var dueDateStr by remember { mutableStateOf("") }
+    var statusSelection by remember { mutableStateOf("ACTIVE") } // ACTIVE, OVERDUE, PAID
+
+    // Metrics / Dashboard
+    val activeFormalLoans = loans.count { it.type == "FORMAL" && !it.isCompleted && it.status == "ACTIVE" }
+    val paidLoans = loans.count { it.type == "FORMAL" && it.isCompleted }
+    val overdueLoans = loans.count { it.type == "FORMAL" && !it.isCompleted && it.status == "OVERDUE" }
+    val totalBorrowed = loans.filter { it.direction == "BORROWED" && !it.isCompleted }.sumOf { it.outstandingAmount }
+    val totalGiven = loans.filter { it.direction == "LENT" && !it.isCompleted }.sumOf { it.outstandingAmount }
+    val pendingSoftLoans = loans.count { it.type == "SOFT" && !it.isCompleted }
 
     Column(
         modifier = modifier
@@ -1503,14 +1841,123 @@ fun LoansScreen(
             .padding(horizontal = 20.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        Text(
-            text = "LOANS & CREDIT CHANNELS",
-            color = specs.contentSecondary,
-            fontSize = 11.sp,
-            fontWeight = FontWeight.Bold,
-            letterSpacing = 1.5.sp,
-            modifier = Modifier.padding(top = 16.dp)
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "LOANS & CREDIT CHANNELS",
+                color = specs.contentSecondary,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.5.sp
+            )
+
+            // Dynamic float action to trigger Loan Dialog
+            Button(
+                onClick = {
+                    // Reset fields
+                    borrowerOrLender = ""
+                    loanAmountStr = ""
+                    interestRateStr = ""
+                    emiAmountStr = ""
+                    direction = "BORROWED"
+                    notes = ""
+                    startDateStr = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+                    dueDateStr = ""
+                    statusSelection = "ACTIVE"
+                    showAddLoanDialog = true
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = specs.activeContainer),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Text("+ Facility", color = specs.onActiveContainer, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+            }
+        }
+
+        // --- LOAN DASHBOARD ---
+        GlassCard(modifier = Modifier.fillMaxWidth()) {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    text = "CREDIT & LOAN ANALYTICS",
+                    color = specs.contentSecondary,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.sp
+                )
+                
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    // Total Borrowed
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(specs.inactiveContainer)
+                            .padding(10.dp)
+                    ) {
+                        Text("TOTAL BORROWED", color = specs.contentSecondary, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            "$currency${String.format(Locale.getDefault(), "%,.0f", totalBorrowed)}",
+                            color = ExpenseCoral,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+                    
+                    // Total Given
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(specs.inactiveContainer)
+                            .padding(10.dp)
+                    ) {
+                        Text("TOTAL GIVEN", color = specs.contentSecondary, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            "$currency${String.format(Locale.getDefault(), "%,.0f", totalGiven)}",
+                            color = AssetGreen,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+                }
+                
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("Active", color = specs.contentSecondary, fontSize = 8.sp)
+                        Text("$activeFormalLoans", color = specs.contentPrimary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    }
+                    Box(modifier = Modifier.width(1.dp).height(16.dp).background(specs.inactiveContainerBorder))
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("Paid", color = specs.contentSecondary, fontSize = 8.sp)
+                        Text("$paidLoans", color = AssetGreen, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    }
+                    Box(modifier = Modifier.width(1.dp).height(16.dp).background(specs.inactiveContainerBorder))
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("Overdue", color = specs.contentSecondary, fontSize = 8.sp)
+                        Text("$overdueLoans", color = ExpenseCoral, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    }
+                    Box(modifier = Modifier.width(1.dp).height(16.dp).background(specs.inactiveContainerBorder))
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("Soft Pend", color = specs.contentSecondary, fontSize = 8.sp)
+                        Text("$pendingSoftLoans", color = specs.activeContainer, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    }
+                }
+            }
+        }
 
         // Switch Tab
         Row(
@@ -1565,8 +2012,8 @@ fun LoansScreen(
             } else {
                 items(categorisedLoans) { loan ->
                     if (showFormalLoansMode) {
-                        FormalRepayTimelineCard(loan = loan, currency = currency) {
-                            viewModel.repayLoanAmount(loan, loan.emiAmount)
+                        FormalRepayTimelineCard(loan = loan, currency = currency) { payAmt ->
+                            viewModel.repayLoanAmount(loan, payAmt)
                         }
                     } else {
                         SoftLoanFlowCard(loan = loan, currency = currency) {
@@ -1577,24 +2024,245 @@ fun LoansScreen(
             }
         }
     }
+
+    // --- ADD LOAN DIALOG ---
+    if (showAddLoanDialog) {
+        AlertDialog(
+            onDismissRequest = { showAddLoanDialog = false },
+            title = {
+                Text(
+                    text = if (showFormalLoansMode) "Add Formal Loan" else "Add Soft Loan",
+                    color = specs.contentPrimary,
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    TextField(
+                        value = borrowerOrLender,
+                        onValueChange = { borrowerOrLender = it },
+                        label = { Text(if (showFormalLoansMode) "Lender / Institution" else "Name") },
+                        colors = TextFieldDefaults.colors(
+                            focusedTextColor = specs.contentPrimary,
+                            unfocusedTextColor = specs.contentPrimary,
+                            focusedContainerColor = specs.inactiveContainer,
+                            unfocusedContainerColor = specs.inactiveContainer
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    TextField(
+                        value = loanAmountStr,
+                        onValueChange = { loanAmountStr = it },
+                        label = { Text("Amount") },
+                        colors = TextFieldDefaults.colors(
+                            focusedTextColor = specs.contentPrimary,
+                            unfocusedTextColor = specs.contentPrimary,
+                            focusedContainerColor = specs.inactiveContainer,
+                            unfocusedContainerColor = specs.inactiveContainer
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    if (showFormalLoansMode) {
+                        TextField(
+                            value = interestRateStr,
+                            onValueChange = { interestRateStr = it },
+                            label = { Text("Interest Rate % (optional)") },
+                            colors = TextFieldDefaults.colors(
+                                focusedTextColor = specs.contentPrimary,
+                                unfocusedTextColor = specs.contentPrimary,
+                                focusedContainerColor = specs.inactiveContainer,
+                                unfocusedContainerColor = specs.inactiveContainer
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        TextField(
+                            value = emiAmountStr,
+                            onValueChange = { emiAmountStr = it },
+                            label = { Text("Monthly EMI Amount") },
+                            colors = TextFieldDefaults.colors(
+                                focusedTextColor = specs.contentPrimary,
+                                unfocusedTextColor = specs.contentPrimary,
+                                focusedContainerColor = specs.inactiveContainer,
+                                unfocusedContainerColor = specs.inactiveContainer
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        TextField(
+                            value = startDateStr,
+                            onValueChange = { startDateStr = it },
+                            label = { Text("Start Date (YYYY-MM-DD)") },
+                            colors = TextFieldDefaults.colors(
+                                focusedTextColor = specs.contentPrimary,
+                                unfocusedTextColor = specs.contentPrimary,
+                                focusedContainerColor = specs.inactiveContainer,
+                                unfocusedContainerColor = specs.inactiveContainer
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        TextField(
+                            value = dueDateStr,
+                            onValueChange = { dueDateStr = it },
+                            label = { Text("Due Date (YYYY-MM-DD)") },
+                            colors = TextFieldDefaults.colors(
+                                focusedTextColor = specs.contentPrimary,
+                                unfocusedTextColor = specs.contentPrimary,
+                                focusedContainerColor = specs.inactiveContainer,
+                                unfocusedContainerColor = specs.inactiveContainer
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    } else {
+                        TextField(
+                            value = startDateStr,
+                            onValueChange = { startDateStr = it },
+                            label = { Text("Date (YYYY-MM-DD)") },
+                            colors = TextFieldDefaults.colors(
+                                focusedTextColor = specs.contentPrimary,
+                                unfocusedTextColor = specs.contentPrimary,
+                                focusedContainerColor = specs.inactiveContainer,
+                                unfocusedContainerColor = specs.inactiveContainer
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+
+                    TextField(
+                        value = notes,
+                        onValueChange = { notes = it },
+                        label = { Text("Notes / Description") },
+                        colors = TextFieldDefaults.colors(
+                            focusedTextColor = specs.contentPrimary,
+                            unfocusedTextColor = specs.contentPrimary,
+                            focusedContainerColor = specs.inactiveContainer,
+                            unfocusedContainerColor = specs.inactiveContainer
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    // Direction selection
+                    Text("DIRECTION", color = specs.contentSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = { direction = "BORROWED" },
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (direction == "BORROWED") specs.activeContainer else specs.inactiveContainer
+                            )
+                        ) {
+                            Text(if (showFormalLoansMode) "Borrowed From" else "Borrowed From", color = if (direction == "BORROWED") specs.onActiveContainer else specs.contentPrimary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        }
+
+                        Button(
+                            onClick = { direction = "LENT" },
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (direction == "LENT") specs.activeContainer else specs.inactiveContainer
+                            )
+                        ) {
+                            Text(if (showFormalLoansMode) "Lent To / Assets" else "Given To", color = if (direction == "LENT") specs.onActiveContainer else specs.contentPrimary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    if (showFormalLoansMode) {
+                        Text("STATUS", color = specs.contentSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            listOf("ACTIVE", "OVERDUE", "PAID").forEach { statusName ->
+                                val selected = statusSelection == statusName
+                                Button(
+                                    onClick = { statusSelection = statusName },
+                                    modifier = Modifier.weight(1f),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = if (selected) specs.activeContainer else specs.inactiveContainer
+                                    ),
+                                    contentPadding = PaddingValues(horizontal = 4.dp)
+                                ) {
+                                    Text(statusName, color = if (selected) specs.onActiveContainer else specs.contentPrimary, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val amount = loanAmountStr.toDoubleOrNull() ?: 0.0
+                        if (borrowerOrLender.isNotEmpty() && amount > 0.0) {
+                            val interest = interestRateStr.toDoubleOrNull() ?: 0.0
+                            val emi = emiAmountStr.toDoubleOrNull() ?: 0.0
+                            val nextDue = try {
+                                val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+                                sdf.parse(dueDateStr.ifEmpty { startDateStr })?.time ?: System.currentTimeMillis()
+                            } catch (e: Exception) {
+                                System.currentTimeMillis()
+                            }
+                            
+                            viewModel.addLoan(
+                                type = if (showFormalLoansMode) "FORMAL" else "SOFT",
+                                borrowerOrLender = borrowerOrLender,
+                                amount = amount,
+                                interest = interest,
+                                emi = emi,
+                                direction = direction,
+                                nextDue = nextDue,
+                                startDate = startDateStr,
+                                dueDateString = dueDateStr,
+                                notes = notes,
+                                status = if (showFormalLoansMode) statusSelection else "ACTIVE"
+                            )
+                            showAddLoanDialog = false
+                        }
+                    }
+                ) {
+                    Text("Save", color = specs.activeContainer, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAddLoanDialog = false }) {
+                    Text("Cancel", color = specs.contentSecondary)
+                }
+            }
+        )
+    }
 }
 
 @Composable
 fun FormalRepayTimelineCard(
     loan: Loan,
     currency: String,
-    onEmiRepay: () -> Unit
+    onRepay: (Double) -> Unit
 ) {
-    val daysOverdue = 3 // Dec 15 vs simulated system time
-    val progress = (1f - (loan.outstandingAmount / loan.loanAmount)).toFloat()
+    val progress = if (loan.loanAmount > 0.0) (1f - (loan.outstandingAmount / loan.loanAmount)).toFloat() else 1f
     val specs = AureumThemeStyles.specs
+    var showRepayDialog by remember { mutableStateOf(false) }
+    var repayAmountInput by remember { mutableStateOf("") }
 
     GlassCard(modifier = Modifier.fillMaxWidth()) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Column {
                     Text(loan.borrowerOrLender, color = specs.contentPrimary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                    Text("Next: Dec 15 (Scheduled)", color = specs.contentSecondary, fontSize = 11.sp)
+                    Text(
+                        text = "Loan Type: ${if (loan.direction == "BORROWED") "Borrowing (Liability)" else "Lent (Asset)"}", 
+                        color = specs.contentSecondary, 
+                        fontSize = 11.sp
+                    )
                 }
                 Box(
                     modifier = Modifier
@@ -1607,64 +2275,142 @@ fun FormalRepayTimelineCard(
             }
 
             // Timeline graphic node
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier
-                        .size(12.dp)
-                        .clip(CircleShape)
-                        .background(specs.inactiveContainer)
-                )
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(3.dp)
-                        .clip(CircleShape)
-                        .background(specs.inactiveContainer)
-                ) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Start: ${loan.startDate.ifEmpty { "N/A" }}", color = specs.contentSecondary, fontSize = 10.sp)
+                    Text("Due: ${loan.dueDateString.ifEmpty { "N/A" }}", color = specs.contentSecondary, fontSize = 10.sp)
+                }
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Box(
                         modifier = Modifier
-                            .fillMaxHeight()
-                            .fillMaxWidth(progress)
+                            .size(12.dp)
+                            .clip(CircleShape)
                             .background(specs.activeContainer)
                     )
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(6.dp)
+                            .clip(CircleShape)
+                            .background(specs.inactiveContainer)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxHeight()
+                                .fillMaxWidth(progress)
+                                .background(specs.activeContainer)
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .size(16.dp)
+                            .clip(CircleShape)
+                            .background(if (loan.isCompleted) AssetGreen else ExpenseCoral)
+                    )
                 }
-                Box(
-                    modifier = Modifier
-                        .size(16.dp)
-                        .clip(CircleShape)
-                        .background(ExpenseCoral)
-                )
             }
 
-            // High-fidelity Overdue notification panel
+            // High-fidelity payment notification panel
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(12.dp))
-                    .background(ExpenseCoral.copy(alpha = 0.1f))
-                    .border(1.dp, ExpenseCoral.copy(alpha = 0.2f), RoundedCornerShape(12.dp))
+                    .background(specs.inactiveContainer)
+                    .border(1.dp, specs.inactiveContainerBorder, RoundedCornerShape(12.dp))
                     .padding(12.dp)
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column {
-                        Text("⚠ OVERDUE $daysOverdue DAYS", color = ExpenseCoral, fontWeight = FontWeight.Bold, fontSize = 11.sp)
-                        Text("$currency${String.format(Locale.getDefault(), "%,.0f", loan.emiAmount)} outstanding EMI", color = specs.contentPrimary, fontSize = 13.sp)
-                    }
-                    Button(
-                        onClick = onEmiRepay,
-                        colors = ButtonDefaults.buttonColors(containerColor = ExpenseCoral),
-                        shape = RoundedCornerShape(8.dp),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("PAY NOW", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 10.sp)
+                        Column {
+                            val statusColor = when (loan.status) {
+                                "OVERDUE" -> ExpenseCoral
+                                "PAID" -> AssetGreen
+                                else -> specs.activeContainer
+                            }
+                            Text("STATUS: ${loan.status}", color = statusColor, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                            Text(
+                                text = "Remaining: $currency${String.format(Locale.getDefault(), "%,.1f", loan.outstandingAmount)} / $currency${String.format(Locale.getDefault(), "%,.1f", loan.loanAmount)}",
+                                color = specs.contentPrimary,
+                                fontSize = 13.sp
+                            )
+                        }
+                        
+                        if (!loan.isCompleted) {
+                            Button(
+                                onClick = {
+                                    repayAmountInput = loan.emiAmount.toString()
+                                    showRepayDialog = true
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = specs.activeContainer),
+                                shape = RoundedCornerShape(8.dp),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                            ) {
+                                Text("REPAY", color = specs.onActiveContainer, fontWeight = FontWeight.Bold, fontSize = 10.sp)
+                            }
+                        }
+                    }
+
+                    if (loan.notes.isNotEmpty()) {
+                        Text("Notes: ${loan.notes}", color = specs.contentSecondary, fontSize = 11.sp)
+                    }
+
+                    // Repayment histories / payment histories
+                    if (loan.paymentsJson.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text("PAYMENT HISTORY", color = specs.contentSecondary, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                        loan.paymentsJson.split("|").forEach { payment ->
+                            Text("• $payment", color = AssetGreen, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+                        }
                     }
                 }
             }
         }
+    }
+
+    if (showRepayDialog) {
+        AlertDialog(
+            onDismissRequest = { showRepayDialog = false },
+            title = { Text("Repay Loan", color = specs.contentPrimary, fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Enter repayment amount to deduct from vaults.", color = specs.contentSecondary, fontSize = 13.sp)
+                    TextField(
+                        value = repayAmountInput,
+                        onValueChange = { repayAmountInput = it },
+                        label = { Text("Repayment Amount ($currency)") },
+                        colors = TextFieldDefaults.colors(
+                            focusedTextColor = specs.contentPrimary,
+                            unfocusedTextColor = specs.contentPrimary,
+                            focusedContainerColor = specs.inactiveContainer,
+                            unfocusedContainerColor = specs.inactiveContainer
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val amount = repayAmountInput.toDoubleOrNull() ?: 0.0
+                        if (amount > 0.0) {
+                            onRepay(amount)
+                            showRepayDialog = false
+                        }
+                    }
+                ) {
+                    Text("Confirm Pay", color = specs.activeContainer, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRepayDialog = false }) {
+                    Text("Cancel", color = specs.contentSecondary)
+                }
+            }
+        )
     }
 }
 
@@ -1699,7 +2445,6 @@ fun SoftLoanFlowCard(
                             .background(if (isGiving) AssetGreen.copy(alpha = 0.15f) else ExpenseCoral.copy(alpha = 0.15f)),
                         contentAlignment = Alignment.Center
                     ) {
-                        // User avatar name representation
                         Text(
                             loan.borrowerOrLender.take(2).uppercase(),
                             color = if (isGiving) AssetGreen else ExpenseCoral,
@@ -1738,22 +2483,37 @@ fun SoftLoanFlowCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = if (isGiving) " Borrower's Account ←─── $currency${loan.outstandingAmount.toInt()} ─── You"
-                           else " Lender's Account ─── $currency${loan.outstandingAmount.toInt()} ───→ You",
+                    text = if (isGiving) " Friend's Account ←─── $currency${loan.outstandingAmount.toInt()} ─── You"
+                           else " Friend's Account ─── $currency${loan.outstandingAmount.toInt()} ───→ You",
                     color = specs.contentSecondary,
                     fontSize = 11.sp,
                     fontFamily = FontFamily.Monospace
                 )
             }
 
-            if (!loan.isCompleted) {
-                Button(
-                    onClick = onMarkReturned,
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(containerColor = MidnightPrimary.copy(alpha = 0.15f)),
-                    shape = RoundedCornerShape(10.dp)
-                ) {
-                    Text("Mark Returned", color = MidnightPrimary, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+            if (loan.notes.isNotEmpty()) {
+                Text("Note: ${loan.notes}", color = specs.contentSecondary, fontSize = 12.sp)
+            }
+            Text("Date: ${loan.startDate}", color = specs.contentSecondary, fontSize = 11.sp)
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                val statusText = if (loan.isCompleted) "Returned" else "Pending"
+                val statusColor = if (loan.isCompleted) AssetGreen else ExpenseCoral
+                Text("STATUS: $statusText", color = statusColor, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+
+                if (!loan.isCompleted) {
+                    Button(
+                        onClick = onMarkReturned,
+                        colors = ButtonDefaults.buttonColors(containerColor = specs.activeContainer),
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
+                    ) {
+                        Text("Settle / Returned", color = specs.onActiveContainer, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                    }
                 }
             }
         }
@@ -1780,6 +2540,21 @@ fun AddTransactionScreen(
     var destinationAccountId by remember { mutableStateOf<Int?>(null) }
     var transferFeeStr by remember { mutableStateOf("0") }
     var receiptPath by remember { mutableStateOf<String?>(null) }
+
+    val editingTx by viewModel.editingTransaction.collectAsState()
+
+    androidx.compose.runtime.LaunchedEffect(editingTx) {
+        editingTx?.let { tx ->
+            amountStr = if (tx.amount % 1.0 == 0.0) tx.amount.toInt().toString() else tx.amount.toString()
+            selectedType = tx.type
+            selectedCategory = tx.category
+            noteStr = tx.note
+            selectedAccountId = tx.accountId
+            destinationAccountId = tx.toAccountId
+            transferFeeStr = if (tx.fee % 1.0 == 0.0) tx.fee.toInt().toString() else tx.fee.toString()
+            receiptPath = tx.receiptPath
+        }
+    }
 
     var showKeyboard by remember { mutableStateOf(false) }
     var keypadTarget by remember { mutableStateOf("AMOUNT") } // AMOUNT, FEE
@@ -2106,17 +2881,34 @@ fun AddTransactionScreen(
                 val value = amountStr.toDoubleOrNull() ?: 0.0
                 val feeVal = if (selectedType == "TRANSFER") (transferFeeStr.toDoubleOrNull() ?: 0.0) else 0.0
                 if (value > 0.0) {
-                    viewModel.addTransaction(
-                        type = selectedType,
-                        amount = value,
-                        category = if (selectedType == "TRANSFER") "Internal" else selectedCategory,
-                        accountId = selectedAccountId,
-                        toAccountId = destinationAccountId,
-                        note = noteStr,
-                        timestamp = System.currentTimeMillis(),
-                        receiptPath = receiptPath,
-                        fee = feeVal
-                    )
+                    val currentEdit = viewModel.editingTransaction.value
+                    if (currentEdit != null) {
+                        viewModel.editTransaction(
+                            oldTransaction = currentEdit,
+                            type = selectedType,
+                            amount = value,
+                            category = if (selectedType == "TRANSFER") "Internal" else selectedCategory,
+                            accountId = selectedAccountId,
+                            toAccountId = destinationAccountId,
+                            note = noteStr,
+                            timestamp = currentEdit.timestamp,
+                            receiptPath = receiptPath,
+                            fee = feeVal
+                        )
+                        viewModel.editingTransaction.value = null
+                    } else {
+                        viewModel.addTransaction(
+                            type = selectedType,
+                            amount = value,
+                            category = if (selectedType == "TRANSFER") "Internal" else selectedCategory,
+                            accountId = selectedAccountId,
+                            toAccountId = destinationAccountId,
+                            note = noteStr,
+                            timestamp = System.currentTimeMillis(),
+                            receiptPath = receiptPath,
+                            fee = feeVal
+                        )
+                    }
                     onComplete()
                 }
             },
@@ -2126,7 +2918,7 @@ fun AddTransactionScreen(
             colors = ButtonDefaults.buttonColors(containerColor = specs.activeContainer),
             shape = RoundedCornerShape(16.dp)
         ) {
-            Text("LOG TRANSACTION", color = specs.onActiveContainer, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            Text(if (editingTx != null) "UPDATE TRANSACTION" else "LOG TRANSACTION", color = specs.onActiveContainer, fontWeight = FontWeight.Bold, fontSize = 15.sp)
         }
     }
 
@@ -2277,8 +3069,8 @@ fun SettingsScreen(
         modifier = modifier
             .fillMaxSize()
             .padding(horizontal = 20.dp)
-            .padding(top = 16.dp, bottom = 120.dp)
-            .verticalScroll(rememberScrollState()),
+            .verticalScroll(rememberScrollState())
+            .padding(top = 16.dp, bottom = 140.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp)
     ) {
         Text(

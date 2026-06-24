@@ -200,7 +200,7 @@ fun AureumVectorIcon(
                 drawLine(color = tint, start = Offset(w * 0.4f, h * 0.48f), end = Offset(w * 0.16f, h * 0.65f), strokeWidth = strokeWidth)
                 drawLine(color = tint, start = Offset(w * 0.4f, h * 0.82f), end = Offset(w * 0.16f, h * 0.65f), strokeWidth = strokeWidth)
             }
-            "dashboard", "home" -> {
+            "dashboard" -> {
                 // Grid of 4 rounded rectangles
                 val pad = w * 0.08f
                 val sizeVal = w * 0.34f
@@ -360,26 +360,27 @@ fun AureumVectorIcon(
                 drawPath(path = sPath, color = tint, style = Stroke(width = strokeWidth))
             }
             "home", "house" -> {
-                // Roof
+                // Roof outline
                 val rPath = Path().apply {
-                    moveTo(w * 0.5f, h * 0.15f)
-                    lineTo(w * 0.86f, h * 0.45f)
-                    lineTo(w * 0.14f, h * 0.45f)
+                    moveTo(w * 0.5f, h * 0.12f)
+                    lineTo(w * 0.88f, h * 0.44f)
+                    lineTo(w * 0.12f, h * 0.44f)
                     close()
                 }
-                drawPath(path = rPath, color = tint)
-                // Frame
+                drawPath(path = rPath, color = tint, style = Stroke(width = strokeWidth))
+                // Frame outline
                 drawRect(
                     color = tint,
-                    topLeft = Offset(w * 0.22f, h * 0.45f),
-                    size = Size(w * 0.56f, h * 0.39f),
+                    topLeft = Offset(w * 0.22f, h * 0.44f),
+                    size = Size(w * 0.56f, h * 0.42f),
                     style = Stroke(width = strokeWidth)
                 )
-                // Door
+                // Door outline
                 drawRect(
                     color = tint,
-                    topLeft = Offset(w * 0.42f, h * 0.64f),
-                    size = Size(w * 0.16f, h * 0.2f)
+                    topLeft = Offset(w * 0.42f, h * 0.62f),
+                    size = Size(w * 0.16f, h * 0.24f),
+                    style = Stroke(width = strokeWidth)
                 )
             }
             "building", "rent" -> {

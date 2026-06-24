@@ -54,6 +54,9 @@ class AureumViewModel(application: Application) : AndroidViewModel(application) 
     // Export confirmation message state
     val exportMessage = MutableStateFlow<String?>(null)
 
+    // Transaction being edited (null if adding a new transaction)
+    val editingTransaction = MutableStateFlow<com.example.data.db.Transaction?>(null)
+
     init {
         if (isPinGuardEnabled.value) {
             isLocked.value = true
@@ -110,6 +113,14 @@ class AureumViewModel(application: Application) : AndroidViewModel(application) 
                 }
             }
         }
+
+        // Trigger one-time v1.11 data reset for development
+        if (!prefs.getBoolean("v111_data_reset_done_v111", false)) {
+            viewModelScope.launch {
+                repository.clearTransactions()
+                prefs.edit().putBoolean("v111_data_reset_done_v111", true).apply()
+            }
+        }
     }
 
     private suspend fun seedDefaultAureumData() {
@@ -141,40 +152,8 @@ class AureumViewModel(application: Application) : AndroidViewModel(application) 
         repository.insertAccount(reserve)
         repository.insertAccount(metalCard)
 
-        // Seed initial corresponding transactions
-        val now = System.currentTimeMillis()
-        repository.insertTransaction(
-            Transaction(
-                type = "EXPENSE",
-                amount = 4500.0,
-                category = "Retail",
-                accountId = 1,
-                note = "Harrods Shopping Collection",
-                timestamp = now - 7200000 // 2 hours ago
-            )
-        )
-        repository.insertTransaction(
-            Transaction(
-                type = "INCOME",
-                amount = 50000.0,
-                category = "Internal",
-                accountId = 1,
-                note = "Dividends & Growth yields",
-                timestamp = now - 86400000 // Yesterday
-            )
-        )
-        repository.insertTransaction(
-            Transaction(
-                type = "EXPENSE",
-                amount = 12800.0,
-                category = "Dining",
-                accountId = 1, // Aureum Vault
-                note = "Nobu Luxury Fine Dining",
-                timestamp = now - 172800000 // 2 Days ago
-            )
-        )
-
         // Seed structured loans (Formal EMI + Soft friends loans)
+        val now = System.currentTimeMillis()
         val overdueDate = now - 3 * 24 * 60 * 60 * 1000 // 3 days overdue
         val autoLoanFutureDate = now + 10 * 24 * 60 * 60 * 1000 // 10 days out
 
@@ -260,6 +239,35 @@ class AureumViewModel(application: Application) : AndroidViewModel(application) 
     fun deleteTransaction(transaction: Transaction) {
         viewModelScope.launch {
             repository.deleteTransaction(transaction)
+        }
+    }
+
+    fun editTransaction(
+        oldTransaction: Transaction,
+        type: String,
+        amount: Double,
+        category: String,
+        accountId: Int,
+        toAccountId: Int?,
+        note: String,
+        timestamp: Long,
+        receiptPath: String?,
+        fee: Double = 0.0
+    ) {
+        viewModelScope.launch {
+            repository.deleteTransaction(oldTransaction)
+            val trans = Transaction(
+                type = type,
+                amount = amount,
+                category = category,
+                accountId = accountId,
+                toAccountId = toAccountId,
+                note = note,
+                timestamp = timestamp,
+                receiptPath = receiptPath,
+                fee = fee
+            )
+            repository.insertTransaction(trans)
         }
     }
 
@@ -379,7 +387,19 @@ class AureumViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // --- Loans Operations ---
-    fun addLoan(type: String, borrowerOrLender: String, amount: Double, interest: Double, emi: Double, direction: String, nextDue: Long) {
+    fun addLoan(
+        type: String,
+        borrowerOrLender: String,
+        amount: Double,
+        interest: Double,
+        emi: Double,
+        direction: String,
+        nextDue: Long,
+        startDate: String = "",
+        dueDateString: String = "",
+        notes: String = "",
+        status: String = "ACTIVE"
+    ) {
         viewModelScope.launch {
             val l = Loan(
                 type = type,
@@ -389,7 +409,12 @@ class AureumViewModel(application: Application) : AndroidViewModel(application) 
                 outstandingAmount = amount,
                 nextDueDate = nextDue,
                 emiAmount = emi,
-                direction = direction
+                direction = direction,
+                startDate = startDate,
+                dueDateString = dueDateString,
+                notes = notes,
+                status = status,
+                isCompleted = false
             )
             repository.insertLoan(l)
         }
@@ -397,9 +422,20 @@ class AureumViewModel(application: Application) : AndroidViewModel(application) 
 
     fun repayLoanAmount(loan: Loan, amountPaid: Double) {
         viewModelScope.launch {
+            val dateStr = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date())
+            val paymentEntry = "$amountPaid BDT ($dateStr)"
+            val oldHistory = loan.paymentsJson
+            val updatedHistory = if (oldHistory.isEmpty()) paymentEntry else "$oldHistory|$paymentEntry"
+            
+            val newOutstanding = maxOf(0.0, loan.outstandingAmount - amountPaid)
+            val completed = newOutstanding <= 0.0
+            val updatedStatus = if (completed) "PAID" else loan.status
+            
             val updated = loan.copy(
-                outstandingAmount = maxOf(0.0, loan.outstandingAmount - amountPaid),
-                isCompleted = (loan.outstandingAmount - amountPaid) <= 0.0
+                outstandingAmount = newOutstanding,
+                isCompleted = completed,
+                status = updatedStatus,
+                paymentsJson = updatedHistory
             )
             repository.updateLoan(updated)
             

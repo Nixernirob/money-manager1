@@ -87,6 +87,13 @@ fun MainApplicationChrome(viewModel: AureumViewModel) {
     // Track popup creators overlay
     var showTransactionCreator by remember { mutableStateOf(false) }
 
+    val editingTx by viewModel.editingTransaction.collectAsState()
+    androidx.compose.runtime.LaunchedEffect(editingTx) {
+        if (editingTx != null) {
+            showTransactionCreator = true
+        }
+    }
+
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         containerColor = Color.Transparent,
@@ -126,6 +133,9 @@ fun MainApplicationChrome(viewModel: AureumViewModel) {
                     "STATS" -> {
                         StatsScreen(viewModel = viewModel)
                     }
+                    "LOANS" -> {
+                        LoansScreen(viewModel = viewModel)
+                    }
                     "ACCOUNTS" -> {
                         AccountsScreen(viewModel = viewModel)
                     }
@@ -148,7 +158,10 @@ fun MainApplicationChrome(viewModel: AureumViewModel) {
                 ) {
                     AddTransactionScreen(
                         viewModel = viewModel,
-                        onComplete = { showTransactionCreator = false }
+                        onComplete = {
+                            showTransactionCreator = false
+                            viewModel.editingTransaction.value = null
+                        }
                     )
                 }
             }
@@ -192,9 +205,9 @@ fun NavigationBarCustomDock(
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             listOf(
-                TabItem("HOME", "home", "Dashboard"),
+                TabItem("HOME", "home", "Home"),
                 TabItem("TRANSACTIONS", "transfer", "Ledger"),
-                TabItem("STATS", "stats", "Analytics")
+                TabItem("STATS", "stats", "Activity")
             ).forEach { tab ->
                 val active = activeTab == tab.id
                 val alphaState by animateFloatAsState(targetValue = if (active) 1f else 0.45f)
@@ -237,7 +250,8 @@ fun NavigationBarCustomDock(
             }
 
             listOf(
-                TabItem("ACCOUNTS", "bank", "Vaults"),
+                TabItem("LOANS", "loans", "Loan"),
+                TabItem("ACCOUNTS", "bank", "Accounts"),
                 TabItem("MORE", "settings", "Preferences")
             ).forEach { tab ->
                 val active = activeTab == tab.id

@@ -40,7 +40,12 @@ data class Loan(
     val nextDueDate: Long,
     val emiAmount: Double = 0.0, // monthly EMI if formal
     val direction: String, // "LENT" (Assets), "BORROWED" (Liability)
-    val isCompleted: Boolean = false
+    val isCompleted: Boolean = false,
+    val startDate: String = "",
+    val dueDateString: String = "",
+    val notes: String = "",
+    val status: String = "ACTIVE", // "ACTIVE", "PAID", "OVERDUE"
+    val paymentsJson: String = "" // Payments log or history
 )
 
 @Entity(tableName = "categories")

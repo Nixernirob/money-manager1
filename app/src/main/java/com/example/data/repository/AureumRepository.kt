@@ -48,6 +48,10 @@ class AureumRepository(
         accountDao.deleteAccount(account)
     }
 
+    suspend fun clearTransactions() {
+        transactionDao.clearTransactions()
+    }
+
     // Handles automatic balance updates on inserting a transaction
     suspend fun insertTransaction(transaction: Transaction) {
         val account = accountDao.getAccountById(transaction.accountId)
