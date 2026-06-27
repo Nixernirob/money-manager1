@@ -91,3 +91,45 @@ interface CategoryDao {
     @Query("DELETE FROM categories")
     suspend fun clearCategories()
 }
+
+@Dao
+interface SoftLoanProfileDao {
+    @Query("SELECT * FROM soft_loan_profiles ORDER BY name ASC")
+    fun getAllProfilesFlow(): Flow<List<SoftLoanProfile>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertProfile(profile: SoftLoanProfile): Long
+
+    @Update
+    suspend fun updateProfile(profile: SoftLoanProfile)
+
+    @Delete
+    suspend fun deleteProfile(profile: SoftLoanProfile)
+
+    @Query("DELETE FROM soft_loan_profiles WHERE id = :id")
+    suspend fun deleteProfileById(id: Int)
+
+    @Query("DELETE FROM soft_loan_profiles")
+    suspend fun clearProfiles()
+}
+
+@Dao
+interface FormalLenderDao {
+    @Query("SELECT * FROM formal_lenders ORDER BY name ASC")
+    fun getAllLendersFlow(): Flow<List<FormalLender>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertLender(lender: FormalLender): Long
+
+    @Update
+    suspend fun updateLender(lender: FormalLender)
+
+    @Delete
+    suspend fun deleteLender(lender: FormalLender)
+
+    @Query("DELETE FROM formal_lenders WHERE id = :id")
+    suspend fun deleteLenderById(id: Int)
+
+    @Query("DELETE FROM formal_lenders")
+    suspend fun clearLenders()
+}

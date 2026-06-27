@@ -7,14 +7,42 @@ class AureumRepository(
     private val accountDao: AccountDao,
     private val transactionDao: TransactionDao,
     private val loanDao: LoanDao,
-    private val categoryDao: CategoryDao
+    private val categoryDao: CategoryDao,
+    private val softLoanProfileDao: SoftLoanProfileDao,
+    private val formalLenderDao: FormalLenderDao
 ) {
     val allAccounts: Flow<List<Account>> = accountDao.getAllAccountsFlow()
     val allTransactions: Flow<List<Transaction>> = transactionDao.getAllTransactionsFlow()
     val allLoans: Flow<List<Loan>> = loanDao.getAllLoansFlow()
     val allCategories: Flow<List<Category>> = categoryDao.getAllCategoriesFlow()
+    val allSoftLoanProfiles: Flow<List<SoftLoanProfile>> = softLoanProfileDao.getAllProfilesFlow()
+    val allFormalLenders: Flow<List<FormalLender>> = formalLenderDao.getAllLendersFlow()
 
     suspend fun getAccount(id: Int): Account? = accountDao.getAccountById(id)
+
+    suspend fun insertSoftLoanProfile(profile: SoftLoanProfile) {
+        softLoanProfileDao.insertProfile(profile)
+    }
+
+    suspend fun updateSoftLoanProfile(profile: SoftLoanProfile) {
+        softLoanProfileDao.updateProfile(profile)
+    }
+
+    suspend fun deleteSoftLoanProfile(profile: SoftLoanProfile) {
+        softLoanProfileDao.deleteProfile(profile)
+    }
+
+    suspend fun insertFormalLender(lender: FormalLender) {
+        formalLenderDao.insertLender(lender)
+    }
+
+    suspend fun updateFormalLender(lender: FormalLender) {
+        formalLenderDao.updateLender(lender)
+    }
+
+    suspend fun deleteFormalLender(lender: FormalLender) {
+        formalLenderDao.deleteLender(lender)
+    }
 
     suspend fun insertCategory(category: Category) {
         categoryDao.insertCategory(category)
@@ -131,5 +159,7 @@ class AureumRepository(
         transactionDao.clearTransactions()
         loanDao.clearLoans()
         categoryDao.clearCategories()
+        softLoanProfileDao.clearProfiles()
+        formalLenderDao.clearLenders()
     }
 }

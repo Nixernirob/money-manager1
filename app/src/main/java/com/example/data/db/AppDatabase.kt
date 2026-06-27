@@ -5,12 +5,14 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 
-@Database(entities = [Account::class, Transaction::class, Loan::class, Category::class], version = 3, exportSchema = false)
+@Database(entities = [Account::class, Transaction::class, Loan::class, Category::class, SoftLoanProfile::class, FormalLender::class], version = 4, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun accountDao(): AccountDao
     abstract fun transactionDao(): TransactionDao
     abstract fun loanDao(): LoanDao
     abstract fun categoryDao(): CategoryDao
+    abstract fun softLoanProfileDao(): SoftLoanProfileDao
+    abstract fun formalLenderDao(): FormalLenderDao
 
     companion object {
         @Volatile

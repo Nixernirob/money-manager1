@@ -37,6 +37,7 @@ import com.example.ui.theme.aureumGlass
 import com.example.ui.theme.contentPrimary
 import com.example.ui.theme.contentSecondary
 import com.example.ui.theme.headingColor
+import com.example.ui.theme.framerHoverEffect
 
 @Composable
 fun GlassCard(
@@ -46,9 +47,11 @@ fun GlassCard(
 ) {
     val specs = AureumThemeStyles.specs
     val grainColor = if (specs.isDark) Color.White.copy(alpha = 0.015f) else Color.Black.copy(alpha = 0.008f)
+    val interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
 
     Box(
         modifier = modifier
+            .framerHoverEffect(interactionSource)
             .aureumGlass(
                 shape = RoundedCornerShape(24.dp),
                 borderWidth = 1.dp,

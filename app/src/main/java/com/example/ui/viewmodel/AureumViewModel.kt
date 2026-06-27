@@ -3,11 +3,7 @@ package com.example.ui.viewmodel
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.data.db.Account
-import com.example.data.db.AppDatabase
-import com.example.data.db.Loan
-import com.example.data.db.Transaction
-import com.example.data.db.Category
+import com.example.data.db.*
 import com.example.data.repository.AureumRepository
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -25,6 +21,8 @@ class AureumViewModel(application: Application) : AndroidViewModel(application) 
     val allTransactions: StateFlow<List<Transaction>>
     val allLoans: StateFlow<List<Loan>>
     val allCategories: StateFlow<List<Category>>
+    lateinit var allSoftLoanProfiles: StateFlow<List<SoftLoanProfile>>
+    lateinit var allFormalLenders: StateFlow<List<FormalLender>>
 
     // Flow matching the active UI screen state
     val activeTab = MutableStateFlow("HOME") // HOME, TRANSACTIONS, STATS, ACCOUNTS, MORE
@@ -67,7 +65,9 @@ class AureumViewModel(application: Application) : AndroidViewModel(application) 
             database.accountDao(),
             database.transactionDao(),
             database.loanDao(),
-            database.categoryDao()
+            database.categoryDao(),
+            database.softLoanProfileDao(),
+            database.formalLenderDao()
         )
 
         allAccounts = repository.allAccounts.stateIn(
@@ -89,6 +89,18 @@ class AureumViewModel(application: Application) : AndroidViewModel(application) 
         )
 
         allCategories = repository.allCategories.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
+
+        allSoftLoanProfiles = repository.allSoftLoanProfiles.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
+
+        allFormalLenders = repository.allFormalLenders.stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5000),
             initialValue = emptyList()
@@ -480,6 +492,77 @@ class AureumViewModel(application: Application) : AndroidViewModel(application) 
     fun deleteLoan(loanId: Int) {
         viewModelScope.launch {
             repository.deleteLoanById(loanId)
+        }
+    }
+
+    // --- Version 1.2 Soft Loan Profile and Formal Lender actions ---
+    fun insertSoftLoanProfile(name: String, profilePic: String? = null, phoneNumber: String? = null, notes: String = "") {
+        viewModelScope.launch {
+            repository.insertSoftLoanProfile(
+                SoftLoanProfile(name = name, profilePic = profilePic, phoneNumber = phoneNumber, notes = notes)
+            )
+        }
+    }
+
+    fun updateSoftLoanProfile(profile: SoftLoanProfile) {
+        viewModelScope.launch {
+            repository.updateSoftLoanProfile(profile)
+        }
+    }
+
+    fun deleteSoftLoanProfile(profile: SoftLoanProfile) {
+        viewModelScope.launch {
+            repository.deleteSoftLoanProfile(profile)
+        }
+    }
+
+    fun insertFormalLender(name: String, notes: String = "") {
+        viewModelScope.launch {
+            repository.insertFormalLender(
+                FormalLender(name = name, notes = notes)
+            )
+        }
+    }
+
+    fun updateFormalLender(lender: FormalLender) {
+        viewModelScope.launch {
+            repository.updateFormalLender(lender)
+        }
+    }
+
+    fun deleteFormalLender(lender: FormalLender) {
+        viewModelScope.launch {
+            repository.deleteFormalLender(lender)
+        }
+    }
+
+    fun addSoftLoanTransaction(
+        profileId: Int,
+        type: String, // "BORROW", "GIVE", "REPAY", "RECEIVE"
+        amount: Double,
+        accountId: Int,
+        note: String,
+        timestamp: Long = System.currentTimeMillis()
+    ) {
+        viewModelScope.launch {
+            val txType = when (type) {
+                "BORROW", "RECEIVE" -> "INCOME"
+                "GIVE", "REPAY" -> "EXPENSE"
+                else -> "EXPENSE"
+            }
+            val trans = Transaction(
+                type = txType,
+                amount = amount,
+                category = "Soft Loan",
+                accountId = accountId,
+                toAccountId = null,
+                note = note,
+                timestamp = timestamp,
+                softLoanProfileId = profileId,
+                softLoanType = type,
+                isLoanActivity = true
+            )
+            repository.insertTransaction(trans)
         }
     }
 

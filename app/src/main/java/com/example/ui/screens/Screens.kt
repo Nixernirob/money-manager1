@@ -36,6 +36,8 @@ import com.example.data.db.Account
 import com.example.data.db.Loan
 import com.example.data.db.Transaction
 import com.example.data.db.Category
+import com.example.data.db.SoftLoanProfile
+import com.example.data.db.FormalLender
 import com.example.ui.components.*
 import com.example.ui.theme.*
 import com.example.ui.viewmodel.AureumViewModel
@@ -96,16 +98,37 @@ fun DashboardScreen(
     val loans by viewModel.allLoans.collectAsState()
     val isBalanceHidden by viewModel.isBalanceHidden.collectAsState()
     val currency by viewModel.selectedCurrency.collectAsState()
+    val softLoanProfiles by viewModel.allSoftLoanProfiles.collectAsState()
 
     var selectedDetailVault by remember { mutableStateOf<Account?>(null) }
 
-    // Calculate total net worth incorporating Formal Loans
+    // Calculate Soft Loan Payable & Receivable across all profiles
+    val softLoanTransactions = transactions.filter { it.softLoanProfileId != null }
+    var totalSoftPayable = 0.0
+    var totalSoftReceivable = 0.0
+
+    softLoanProfiles.forEach { profile ->
+        val profileTx = softLoanTransactions.filter { it.softLoanProfileId == profile.id }
+        val borrowed = profileTx.filter { it.softLoanType == "BORROW" }.sumOf { it.amount }
+        val given = profileTx.filter { it.softLoanType == "GIVE" }.sumOf { it.amount }
+        val repaid = profileTx.filter { it.softLoanType == "REPAY" }.sumOf { it.amount }
+        val received = profileTx.filter { it.softLoanType == "RECEIVE" }.sumOf { it.amount }
+
+        val net = (given + repaid) - (borrowed + received)
+        if (net < 0) {
+            totalSoftPayable += -net
+        } else {
+            totalSoftReceivable += net
+        }
+    }
+
+    // Calculate total net worth incorporating Formal & Soft Loans
     val accountsNetWorth = accounts.sumOf { 
         if (it.type == "CREDIT") -it.balance else it.balance 
     }
     val formalLentLoans = loans.filter { it.type == "FORMAL" && it.direction == "LENT" }.sumOf { it.outstandingAmount }
     val formalBorrowedLoans = loans.filter { it.type == "FORMAL" && it.direction == "BORROWED" }.sumOf { it.outstandingAmount }
-    val totalNetWorth = accountsNetWorth + formalLentLoans - formalBorrowedLoans
+    val totalNetWorth = accountsNetWorth + totalSoftReceivable - totalSoftPayable + formalLentLoans - formalBorrowedLoans
 
     val specs = AureumThemeStyles.specs
     val titleTextColor = specs.contentSecondary
@@ -265,6 +288,37 @@ fun DashboardScreen(
                         label = "Monthly Spent",
                         value = "$currency${monthlyExpense.toInt()}",
                         accentColor = specs.activeContainer,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+        }
+
+        // C.2 Soft Loan Position Cards (Pending to Pay / Pending to Receive)
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    text = "SOFT LOAN POSITION",
+                    color = TextSecondary,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.5.sp
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    InsightChip(
+                        label = "Pending to Pay",
+                        value = if (isBalanceHidden) "••••" else "$currency${totalSoftPayable.toInt()}",
+                        accentColor = ExpenseCoral,
+                        modifier = Modifier.weight(1f)
+                    )
+                    InsightChip(
+                        label = "Pending to Receive",
+                        value = if (isBalanceHidden) "••••" else "$currency${totalSoftReceivable.toInt()}",
+                        accentColor = AssetGreen,
                         modifier = Modifier.weight(1f)
                     )
                 }
@@ -707,12 +761,75 @@ fun TransactionRow(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
-                    Text(
-                        text = if (transaction.type == "TRANSFER") "Transfer" else transaction.category,
-                        color = categoryColor,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                    if (transaction.softLoanProfileId != null) {
+                        val profiles by viewModel.allSoftLoanProfiles.collectAsState()
+                        val pName = profiles.find { it.id == transaction.softLoanProfileId }?.name ?: "Unknown Person"
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(top = 2.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(specs.activeContainer.copy(alpha = 0.15f))
+                                    .padding(horizontal = 5.dp, vertical = 1.dp)
+                            ) {
+                                Text(
+                                    text = "Soft Loan",
+                                    color = specs.activeContainer,
+                                    fontSize = 8.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(if (specs.isDark) Color.White.copy(alpha = 0.1f) else Color.Black.copy(alpha = 0.05f))
+                                    .padding(horizontal = 5.dp, vertical = 1.dp)
+                            ) {
+                                Text(
+                                    text = transaction.softLoanType ?: "Activity",
+                                    color = if (specs.isDark) Color.White else Color.Black,
+                                    fontSize = 8.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            Text(
+                                text = "• $pName",
+                                color = categoryColor,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    } else if (transaction.category == "Loans" || transaction.category == "Formal Loan" || transaction.isLoanActivity) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(top = 2.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(ExpenseCoral.copy(alpha = 0.15f))
+                                    .padding(horizontal = 5.dp, vertical = 1.dp)
+                            ) {
+                                Text(
+                                    text = "Formal Loan",
+                                    color = ExpenseCoral,
+                                    fontSize = 8.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    } else {
+                        Text(
+                            text = if (transaction.type == "TRANSFER") "Transfer" else transaction.category,
+                            color = categoryColor,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                     if (transaction.type == "TRANSFER" && transaction.fee > 0.0) {
                         Text(
                             text = "Fee: $currency${String.format(Locale.getDefault(), "%,.2f", transaction.fee)}",
@@ -858,6 +975,20 @@ fun TransactionRow(
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.Medium
                             )
+                        }
+
+                        if (transaction.softLoanProfileId != null) {
+                            val profiles by viewModel.allSoftLoanProfiles.collectAsState()
+                            val pName = profiles.find { it.id == transaction.softLoanProfileId }?.name ?: "Unknown Person"
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text("👤", fontSize = 14.sp)
+                                Text(
+                                    text = "Relationship Profile: $pName (${transaction.softLoanType})",
+                                    color = specs.contentPrimary,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
                         }
 
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1801,6 +1932,14 @@ fun AccountsScreen(
     }
 }
 
+data class SoftLedgerSummary(
+    val payable: Double,
+    val receivable: Double,
+    val net: Double,
+    val txCount: Int,
+    val lastDate: Long?
+)
+
 // -------------------------------------------------------------
 // LOANS REPAYMENT TIMELINE & SOFT LOANS SYSTEM
 // -------------------------------------------------------------
@@ -1810,30 +1949,62 @@ fun LoansScreen(
     modifier: Modifier = Modifier
 ) {
     val loans by viewModel.allLoans.collectAsState()
+    val softProfiles by viewModel.allSoftLoanProfiles.collectAsState()
+    val formalLenders by viewModel.allFormalLenders.collectAsState()
+    val transactions by viewModel.allTransactions.collectAsState()
+    val accounts by viewModel.allAccounts.collectAsState()
     val currency by viewModel.selectedCurrency.collectAsState()
     val specs = AureumThemeStyles.specs
 
     var showFormalLoansMode by remember { mutableStateOf(true) }
-    var showAddLoanDialog by remember { mutableStateOf(false) }
+    
+    // Dialog state toggles
+    var showAddSoftProfileDialog by remember { mutableStateOf(false) }
+    var showAddSoftTxDialog by remember { mutableStateOf(false) }
+    var showAddFormalLenderDialog by remember { mutableStateOf(false) }
+    var showAddFormalLoanDialog by remember { mutableStateOf(false) }
 
-    // Dialog state variables
-    var borrowerOrLender by remember { mutableStateOf("") }
-    var loanAmountStr by remember { mutableStateOf("") }
-    var interestRateStr by remember { mutableStateOf("") }
-    var emiAmountStr by remember { mutableStateOf("") }
-    var direction by remember { mutableStateOf("BORROWED") } // BORROWED or LENT
-    var notes by remember { mutableStateOf("") }
-    var startDateStr by remember { mutableStateOf(SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())) }
-    var dueDateStr by remember { mutableStateOf("") }
-    var statusSelection by remember { mutableStateOf("ACTIVE") } // ACTIVE, OVERDUE, PAID
+    // Detail States
+    val selectedSoftProfileForDetail = remember { mutableStateOf<SoftLoanProfile?>(null) }
+    val selectedFormalLenderForDetail = remember { mutableStateOf<FormalLender?>(null) }
 
-    // Metrics / Dashboard
+    // --- FORMAL LOAN CALCULATIONS ---
     val activeFormalLoans = loans.count { it.type == "FORMAL" && !it.isCompleted && it.status == "ACTIVE" }
     val paidLoans = loans.count { it.type == "FORMAL" && it.isCompleted }
     val overdueLoans = loans.count { it.type == "FORMAL" && !it.isCompleted && it.status == "OVERDUE" }
-    val totalBorrowed = loans.filter { it.direction == "BORROWED" && !it.isCompleted }.sumOf { it.outstandingAmount }
-    val totalGiven = loans.filter { it.direction == "LENT" && !it.isCompleted }.sumOf { it.outstandingAmount }
-    val pendingSoftLoans = loans.count { it.type == "SOFT" && !it.isCompleted }
+    val totalFormalBorrowed = loans.filter { it.type == "FORMAL" && it.direction == "BORROWED" && !it.isCompleted }.sumOf { it.outstandingAmount }
+    val totalFormalGiven = loans.filter { it.type == "FORMAL" && it.direction == "LENT" && !it.isCompleted }.sumOf { it.outstandingAmount }
+
+    // --- SOFT LOAN CALCULATIONS ---
+    val softLoanTransactions = transactions.filter { it.softLoanProfileId != null }
+    var totalSoftPayableValue = 0.0
+    var totalSoftReceivableValue = 0.0
+
+    val profileLedgers = softProfiles.associateWith { profile ->
+        val profileTx = softLoanTransactions.filter { it.softLoanProfileId == profile.id }
+        val borrowed = profileTx.filter { it.softLoanType == "BORROW" }.sumOf { it.amount }
+        val given = profileTx.filter { it.softLoanType == "GIVE" }.sumOf { it.amount }
+        val repaid = profileTx.filter { it.softLoanType == "REPAY" }.sumOf { it.amount }
+        val received = profileTx.filter { it.softLoanType == "RECEIVE" }.sumOf { it.amount }
+
+        val net = (given + repaid) - (borrowed + received)
+        val payable = if (net < 0) -net else 0.0
+        val receivable = if (net > 0) net else 0.0
+        
+        SoftLedgerSummary(
+            payable = payable,
+            receivable = receivable,
+            net = net,
+            txCount = profileTx.size,
+            lastDate = profileTx.maxOfOrNull { it.timestamp }
+        )
+    }
+
+    profileLedgers.values.forEach { ledger ->
+        totalSoftPayableValue += ledger.payable
+        totalSoftReceivableValue += ledger.receivable
+    }
+    val netSoftPosition = totalSoftReceivableValue - totalSoftPayableValue
 
     Column(
         modifier = modifier
@@ -1854,34 +2025,50 @@ fun LoansScreen(
                 letterSpacing = 1.5.sp
             )
 
-            // Dynamic float action to trigger Loan Dialog
-            Button(
-                onClick = {
-                    // Reset fields
-                    borrowerOrLender = ""
-                    loanAmountStr = ""
-                    interestRateStr = ""
-                    emiAmountStr = ""
-                    direction = "BORROWED"
-                    notes = ""
-                    startDateStr = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
-                    dueDateStr = ""
-                    statusSelection = "ACTIVE"
-                    showAddLoanDialog = true
-                },
-                colors = ButtonDefaults.buttonColors(containerColor = specs.activeContainer),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                shape = RoundedCornerShape(8.dp)
-            ) {
-                Text("+ Facility", color = specs.onActiveContainer, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (showFormalLoansMode) {
+                    Button(
+                        onClick = { showAddFormalLenderDialog = true },
+                        colors = ButtonDefaults.buttonColors(containerColor = specs.inactiveContainer),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text("+ Lender", color = specs.contentPrimary, fontWeight = FontWeight.Bold, fontSize = 10.sp)
+                    }
+                    Button(
+                        onClick = { showAddFormalLoanDialog = true },
+                        colors = ButtonDefaults.buttonColors(containerColor = specs.activeContainer),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text("+ Facility", color = specs.onActiveContainer, fontWeight = FontWeight.Bold, fontSize = 10.sp)
+                    }
+                } else {
+                    Button(
+                        onClick = { showAddSoftProfileDialog = true },
+                        colors = ButtonDefaults.buttonColors(containerColor = specs.inactiveContainer),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text("+ Profile", color = specs.contentPrimary, fontWeight = FontWeight.Bold, fontSize = 10.sp)
+                    }
+                    Button(
+                        onClick = { showAddSoftTxDialog = true },
+                        colors = ButtonDefaults.buttonColors(containerColor = specs.activeContainer),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text("+ Record", color = specs.onActiveContainer, fontWeight = FontWeight.Bold, fontSize = 10.sp)
+                    }
+                }
             }
         }
 
-        // --- LOAN DASHBOARD ---
+        // --- DYNAMIC ANALYTICS DASHBOARD ---
         GlassCard(modifier = Modifier.fillMaxWidth()) {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(
-                    text = "CREDIT & LOAN ANALYTICS",
+                    text = if (showFormalLoansMode) "FORMAL FACILITIES OVERVIEW" else "SOFT RELATIONSHIP LEDGER",
                     color = specs.contentSecondary,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
@@ -1892,18 +2079,24 @@ fun LoansScreen(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    // Total Borrowed
+                    val payableTitle = if (showFormalLoansMode) "TOTAL BORROWED" else "PENDING TO PAY"
+                    val payableVal = if (showFormalLoansMode) totalFormalBorrowed else totalSoftPayableValue
+                    val receivableTitle = if (showFormalLoansMode) "TOTAL LENT" else "PENDING RECEIVABLE"
+                    val receivableVal = if (showFormalLoansMode) totalFormalGiven else totalSoftReceivableValue
+
+                    // Payable Card
                     Column(
                         modifier = Modifier
                             .weight(1f)
                             .clip(RoundedCornerShape(12.dp))
-                            .background(specs.inactiveContainer)
+                            .background(if (specs.isDark) Color.White.copy(alpha = 0.03f) else specs.inactiveContainer)
+                            .border(1.dp, if (specs.isDark) Color.White.copy(alpha = 0.06f) else specs.inactiveContainerBorder, RoundedCornerShape(12.dp))
                             .padding(10.dp)
                     ) {
-                        Text("TOTAL BORROWED", color = specs.contentSecondary, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                        Text(payableTitle, color = specs.contentSecondary, fontSize = 8.sp, fontWeight = FontWeight.Bold)
                         Spacer(modifier = Modifier.height(2.dp))
                         Text(
-                            "$currency${String.format(Locale.getDefault(), "%,.0f", totalBorrowed)}",
+                            "$currency${String.format(Locale.getDefault(), "%,.0f", payableVal)}",
                             color = ExpenseCoral,
                             fontWeight = FontWeight.Bold,
                             fontSize = 15.sp,
@@ -1911,18 +2104,19 @@ fun LoansScreen(
                         )
                     }
                     
-                    // Total Given
+                    // Receivable Card
                     Column(
                         modifier = Modifier
                             .weight(1f)
                             .clip(RoundedCornerShape(12.dp))
-                            .background(specs.inactiveContainer)
+                            .background(if (specs.isDark) Color.White.copy(alpha = 0.03f) else specs.inactiveContainer)
+                            .border(1.dp, if (specs.isDark) Color.White.copy(alpha = 0.06f) else specs.inactiveContainerBorder, RoundedCornerShape(12.dp))
                             .padding(10.dp)
                     ) {
-                        Text("TOTAL GIVEN", color = specs.contentSecondary, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                        Text(receivableTitle, color = specs.contentSecondary, fontSize = 8.sp, fontWeight = FontWeight.Bold)
                         Spacer(modifier = Modifier.height(2.dp))
                         Text(
-                            "$currency${String.format(Locale.getDefault(), "%,.0f", totalGiven)}",
+                            "$currency${String.format(Locale.getDefault(), "%,.0f", receivableVal)}",
                             color = AssetGreen,
                             fontWeight = FontWeight.Bold,
                             fontSize = 15.sp,
@@ -1930,36 +2124,57 @@ fun LoansScreen(
                         )
                     }
                 }
-                
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("Active", color = specs.contentSecondary, fontSize = 8.sp)
-                        Text("$activeFormalLoans", color = specs.contentPrimary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+
+                // Sub-metrics / Health metrics
+                if (showFormalLoansMode) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("Active Loans", color = specs.contentSecondary, fontSize = 8.sp)
+                            Text("$activeFormalLoans", color = specs.contentPrimary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        }
+                        Box(modifier = Modifier.width(1.dp).height(16.dp).background(specs.inactiveContainerBorder))
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("Fully Paid", color = specs.contentSecondary, fontSize = 8.sp)
+                            Text("$paidLoans", color = AssetGreen, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        }
+                        Box(modifier = Modifier.width(1.dp).height(16.dp).background(specs.inactiveContainerBorder))
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("Overdue Items", color = specs.contentSecondary, fontSize = 8.sp)
+                            Text("$overdueLoans", color = ExpenseCoral, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        }
                     }
-                    Box(modifier = Modifier.width(1.dp).height(16.dp).background(specs.inactiveContainerBorder))
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("Paid", color = specs.contentSecondary, fontSize = 8.sp)
-                        Text("$paidLoans", color = AssetGreen, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                    }
-                    Box(modifier = Modifier.width(1.dp).height(16.dp).background(specs.inactiveContainerBorder))
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("Overdue", color = specs.contentSecondary, fontSize = 8.sp)
-                        Text("$overdueLoans", color = ExpenseCoral, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                    }
-                    Box(modifier = Modifier.width(1.dp).height(16.dp).background(specs.inactiveContainerBorder))
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("Soft Pend", color = specs.contentSecondary, fontSize = 8.sp)
-                        Text("$pendingSoftLoans", color = specs.activeContainer, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text("NET SOFT POSITION", color = specs.contentSecondary, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                            Text(
+                                text = if (netSoftPosition >= 0.0) "Net Receivable" else "Net Payable",
+                                color = if (netSoftPosition >= 0.0) AssetGreen else ExpenseCoral,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Text(
+                            text = "$currency${String.format(Locale.getDefault(), "%,.0f", Math.abs(netSoftPosition))}",
+                            color = if (netSoftPosition >= 0.0) AssetGreen else ExpenseCoral,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 18.sp,
+                            fontFamily = FontFamily.Monospace
+                        )
                     }
                 }
             }
         }
 
-        // Switch Tab
+        // --- TAB SELECTOR ---
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -1975,7 +2190,7 @@ fun LoansScreen(
                     containerColor = if (showFormalLoansMode) specs.activeContainer else specs.inactiveContainer
                 )
             ) {
-                Text("FORMAL FACILITIES", color = if (showFormalLoansMode) specs.onActiveContainer else specs.contentPrimary, fontWeight = FontWeight.Bold)
+                Text("FORMAL FACILITIES", color = if (showFormalLoansMode) specs.onActiveContainer else specs.contentPrimary, fontWeight = FontWeight.Bold, fontSize = 11.sp)
             }
 
             Button(
@@ -1989,35 +2204,158 @@ fun LoansScreen(
                     containerColor = if (!showFormalLoansMode) specs.activeContainer else specs.inactiveContainer
                 )
             ) {
-                Text("SOFT CHANNELS", color = if (!showFormalLoansMode) specs.onActiveContainer else specs.contentPrimary, fontWeight = FontWeight.Bold)
+                Text("SOFT CHANNELS", color = if (!showFormalLoansMode) specs.onActiveContainer else specs.contentPrimary, fontWeight = FontWeight.Bold, fontSize = 11.sp)
             }
         }
 
-        // List representation
+        // --- CONTENT SEGMENTS ---
         LazyColumn(
             verticalArrangement = Arrangement.spacedBy(16.dp),
             contentPadding = PaddingValues(bottom = 100.dp),
             modifier = Modifier.weight(1f)
         ) {
-            val categorisedLoans = loans.filter { 
-                if (showFormalLoansMode) it.type == "FORMAL" else it.type == "SOFT"
-            }
-
-            if (categorisedLoans.isEmpty()) {
+            if (showFormalLoansMode) {
+                // Formal Lenders horizontal row
                 item {
-                    Box(modifier = Modifier.fillMaxWidth().padding(40.dp), contentAlignment = Alignment.Center) {
-                        Text("No loans active in this segment.", color = specs.contentSecondary)
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("INSTITUTIONS & LENDERS", color = specs.contentSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        if (formalLenders.isEmpty()) {
+                            Text("No lenders registered yet. Add one to associate formal loans.", color = specs.contentSecondary, fontSize = 11.sp, style = androidx.compose.ui.text.TextStyle(fontStyle = androidx.compose.ui.text.font.FontStyle.Italic))
+                        } else {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                formalLenders.forEach { lender ->
+                                    val lenderLoans = loans.filter { it.type == "FORMAL" && it.borrowerOrLender == lender.name }
+                                    val outstanding = lenderLoans.sumOf { it.outstandingAmount }
+                                    val interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+                                    Box(
+                                        modifier = Modifier
+                                            .framerHoverEffect(interactionSource)
+                                            .clip(RoundedCornerShape(14.dp))
+                                            .background(if (specs.isDark) Color.White.copy(alpha = 0.03f) else specs.inactiveContainer)
+                                            .border(1.dp, if (specs.isDark) Color.White.copy(alpha = 0.06f) else specs.inactiveContainerBorder, RoundedCornerShape(14.dp))
+                                            .clickable(
+                                                interactionSource = interactionSource,
+                                                indication = androidx.compose.foundation.LocalIndication.current,
+                                                onClick = { selectedFormalLenderForDetail.value = lender }
+                                            )
+                                            .padding(horizontal = 14.dp, vertical = 10.dp)
+                                    ) {
+                                        Column {
+                                            Text(lender.name, color = specs.contentPrimary, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                            Text("${lenderLoans.size} loans • O/S: $currency${outstanding.toInt()}", color = specs.contentSecondary, fontSize = 10.sp)
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
-            } else {
-                items(categorisedLoans) { loan ->
-                    if (showFormalLoansMode) {
+
+                // Formal Facilities List
+                val formalLoans = loans.filter { it.type == "FORMAL" }
+                if (formalLoans.isEmpty()) {
+                    item {
+                        Box(modifier = Modifier.fillMaxWidth().padding(40.dp), contentAlignment = Alignment.Center) {
+                            Text("No formal loans active.", color = specs.contentSecondary)
+                        }
+                    }
+                } else {
+                    items(formalLoans) { loan ->
                         FormalRepayTimelineCard(loan = loan, currency = currency) { payAmt ->
                             viewModel.repayLoanAmount(loan, payAmt)
                         }
-                    } else {
-                        SoftLoanFlowCard(loan = loan, currency = currency) {
-                            viewModel.markSoftLoanReturned(loan)
+                    }
+                }
+            } else {
+                // Soft Channels Profiles List
+                if (softProfiles.isEmpty()) {
+                    item {
+                        Box(modifier = Modifier.fillMaxWidth().padding(40.dp), contentAlignment = Alignment.Center) {
+                            Text("No relationship profiles found. Please create one to begin logging soft loans.", color = specs.contentSecondary)
+                        }
+                    }
+                } else {
+                    items(softProfiles) { profile ->
+                        val ledger = profileLedgers[profile]
+                        val payable = ledger?.payable ?: 0.0
+                        val receivable = ledger?.receivable ?: 0.0
+                        val net = ledger?.net ?: 0.0
+
+                        val interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .framerHoverEffect(interactionSource)
+                                .clip(RoundedCornerShape(18.dp))
+                                .background(if (specs.isDark) Color.White.copy(alpha = 0.03f) else specs.inactiveContainer)
+                                .border(1.dp, if (specs.isDark) Color.White.copy(alpha = 0.06f) else specs.inactiveContainerBorder, RoundedCornerShape(18.dp))
+                                .clickable(
+                                    interactionSource = interactionSource,
+                                    indication = androidx.compose.foundation.LocalIndication.current,
+                                    onClick = { selectedSoftProfileForDetail.value = profile }
+                                )
+                                .padding(16.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    // Colored Initial Avatar
+                                    Box(
+                                        modifier = Modifier
+                                            .size(42.dp)
+                                            .clip(CircleShape)
+                                            .background(
+                                                if (net > 0.0) AssetGreen.copy(alpha = 0.15f)
+                                                else if (net < 0.0) ExpenseCoral.copy(alpha = 0.15f)
+                                                else specs.activeContainer.copy(alpha = 0.1f)
+                                            ),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = profile.name.take(2).uppercase(),
+                                            color = if (net > 0.0) AssetGreen else if (net < 0.0) ExpenseCoral else specs.contentPrimary,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 13.sp
+                                        )
+                                    }
+
+                                    Column {
+                                        Text(profile.name, color = specs.contentPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                        Text(
+                                            text = if (net > 0.0) "Owes you $currency${receivable.toInt()}"
+                                                   else if (net < 0.0) "You owe them $currency${payable.toInt()}"
+                                                   else "Fully Settled",
+                                            color = if (net > 0.0) AssetGreen else if (net < 0.0) ExpenseCoral else specs.contentSecondary,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+
+                                // Quick Actions
+                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Button(
+                                        onClick = {
+                                            showAddSoftTxDialog = true
+                                        },
+                                        colors = ButtonDefaults.buttonColors(containerColor = specs.activeContainer),
+                                        shape = RoundedCornerShape(6.dp),
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                        modifier = Modifier.height(28.dp)
+                                    ) {
+                                        Text("+ Transact", color = specs.onActiveContainer, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -2025,121 +2363,147 @@ fun LoansScreen(
         }
     }
 
-    // --- ADD LOAN DIALOG ---
-    if (showAddLoanDialog) {
+    // --- ADD SOFT PROFILE DIALOG ---
+    if (showAddSoftProfileDialog) {
+        var name by remember { mutableStateOf("") }
+        var phone by remember { mutableStateOf("") }
+        var profileNotes by remember { mutableStateOf("") }
+
         AlertDialog(
-            onDismissRequest = { showAddLoanDialog = false },
-            title = {
-                Text(
-                    text = if (showFormalLoansMode) "Add Formal Loan" else "Add Soft Loan",
-                    color = specs.contentPrimary,
-                    fontWeight = FontWeight.Bold
-                )
+            onDismissRequest = { showAddSoftProfileDialog = false },
+            title = { Text("Create Soft Profile", color = specs.contentPrimary, fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    TextField(
+                        value = name,
+                        onValueChange = { name = it },
+                        label = { Text("Person Name") },
+                        colors = TextFieldDefaults.colors(
+                            focusedTextColor = specs.contentPrimary,
+                            unfocusedTextColor = specs.contentPrimary,
+                            focusedContainerColor = specs.inactiveContainer,
+                            unfocusedContainerColor = specs.inactiveContainer
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    TextField(
+                        value = phone,
+                        onValueChange = { phone = it },
+                        label = { Text("Phone (optional)") },
+                        colors = TextFieldDefaults.colors(
+                            focusedTextColor = specs.contentPrimary,
+                            unfocusedTextColor = specs.contentPrimary,
+                            focusedContainerColor = specs.inactiveContainer,
+                            unfocusedContainerColor = specs.inactiveContainer
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    TextField(
+                        value = profileNotes,
+                        onValueChange = { profileNotes = it },
+                        label = { Text("Relationship Notes") },
+                        colors = TextFieldDefaults.colors(
+                            focusedTextColor = specs.contentPrimary,
+                            unfocusedTextColor = specs.contentPrimary,
+                            focusedContainerColor = specs.inactiveContainer,
+                            unfocusedContainerColor = specs.inactiveContainer
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
             },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        if (name.isNotBlank()) {
+                            viewModel.insertSoftLoanProfile(name, null, phone.ifEmpty { null }, profileNotes)
+                            showAddSoftProfileDialog = false
+                        }
+                    }
+                ) {
+                    Text("Create", color = specs.activeContainer, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAddSoftProfileDialog = false }) {
+                    Text("Cancel", color = specs.contentSecondary)
+                }
+            }
+        )
+    }
+
+    // --- ADD SOFT TRANSACTION DIALOG ---
+    if (showAddSoftTxDialog) {
+        var selectedProfile by remember { mutableStateOf<SoftLoanProfile?>(softProfiles.firstOrNull()) }
+        var typeSelected by remember { mutableStateOf("BORROW") } // BORROW, GIVE, REPAY, RECEIVE
+        var amountStr by remember { mutableStateOf("") }
+        var accountSelected by remember { mutableStateOf(accounts.firstOrNull()) }
+        var noteStr by remember { mutableStateOf("") }
+
+        var profileMenuExpanded by remember { mutableStateOf(false) }
+        var accountMenuExpanded by remember { mutableStateOf(false) }
+
+        AlertDialog(
+            onDismissRequest = { showAddSoftTxDialog = false },
+            title = { Text("Record Soft Transaction", color = specs.contentPrimary, fontWeight = FontWeight.Bold) },
             text = {
                 Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                    modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    TextField(
-                        value = borrowerOrLender,
-                        onValueChange = { borrowerOrLender = it },
-                        label = { Text(if (showFormalLoansMode) "Lender / Institution" else "Name") },
-                        colors = TextFieldDefaults.colors(
-                            focusedTextColor = specs.contentPrimary,
-                            unfocusedTextColor = specs.contentPrimary,
-                            focusedContainerColor = specs.inactiveContainer,
-                            unfocusedContainerColor = specs.inactiveContainer
-                        ),
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    // Profile Selection Dropdown
+                    Text("RELATIONSHIP PROFILE", color = specs.contentSecondary, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(specs.inactiveContainer)
+                                .border(1.dp, specs.inactiveContainerBorder, RoundedCornerShape(8.dp))
+                                .clickable { profileMenuExpanded = true }
+                                .padding(14.dp)
+                        ) {
+                            Text(selectedProfile?.name ?: "No profiles created!", color = specs.contentPrimary, fontWeight = FontWeight.Bold)
+                        }
+                        DropdownMenu(expanded = profileMenuExpanded, onDismissRequest = { profileMenuExpanded = false }) {
+                            softProfiles.forEach { p ->
+                                DropdownMenuItem(
+                                    text = { Text(p.name) },
+                                    onClick = {
+                                        selectedProfile = p
+                                        profileMenuExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
 
-                    TextField(
-                        value = loanAmountStr,
-                        onValueChange = { loanAmountStr = it },
-                        label = { Text("Amount") },
-                        colors = TextFieldDefaults.colors(
-                            focusedTextColor = specs.contentPrimary,
-                            unfocusedTextColor = specs.contentPrimary,
-                            focusedContainerColor = specs.inactiveContainer,
-                            unfocusedContainerColor = specs.inactiveContainer
-                        ),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-
-                    if (showFormalLoansMode) {
-                        TextField(
-                            value = interestRateStr,
-                            onValueChange = { interestRateStr = it },
-                            label = { Text("Interest Rate % (optional)") },
-                            colors = TextFieldDefaults.colors(
-                                focusedTextColor = specs.contentPrimary,
-                                unfocusedTextColor = specs.contentPrimary,
-                                focusedContainerColor = specs.inactiveContainer,
-                                unfocusedContainerColor = specs.inactiveContainer
-                            ),
-                            modifier = Modifier.fillMaxWidth()
-                        )
-
-                        TextField(
-                            value = emiAmountStr,
-                            onValueChange = { emiAmountStr = it },
-                            label = { Text("Monthly EMI Amount") },
-                            colors = TextFieldDefaults.colors(
-                                focusedTextColor = specs.contentPrimary,
-                                unfocusedTextColor = specs.contentPrimary,
-                                focusedContainerColor = specs.inactiveContainer,
-                                unfocusedContainerColor = specs.inactiveContainer
-                            ),
-                            modifier = Modifier.fillMaxWidth()
-                        )
-
-                        TextField(
-                            value = startDateStr,
-                            onValueChange = { startDateStr = it },
-                            label = { Text("Start Date (YYYY-MM-DD)") },
-                            colors = TextFieldDefaults.colors(
-                                focusedTextColor = specs.contentPrimary,
-                                unfocusedTextColor = specs.contentPrimary,
-                                focusedContainerColor = specs.inactiveContainer,
-                                unfocusedContainerColor = specs.inactiveContainer
-                            ),
-                            modifier = Modifier.fillMaxWidth()
-                        )
-
-                        TextField(
-                            value = dueDateStr,
-                            onValueChange = { dueDateStr = it },
-                            label = { Text("Due Date (YYYY-MM-DD)") },
-                            colors = TextFieldDefaults.colors(
-                                focusedTextColor = specs.contentPrimary,
-                                unfocusedTextColor = specs.contentPrimary,
-                                focusedContainerColor = specs.inactiveContainer,
-                                unfocusedContainerColor = specs.inactiveContainer
-                            ),
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    } else {
-                        TextField(
-                            value = startDateStr,
-                            onValueChange = { startDateStr = it },
-                            label = { Text("Date (YYYY-MM-DD)") },
-                            colors = TextFieldDefaults.colors(
-                                focusedTextColor = specs.contentPrimary,
-                                unfocusedTextColor = specs.contentPrimary,
-                                focusedContainerColor = specs.inactiveContainer,
-                                unfocusedContainerColor = specs.inactiveContainer
-                            ),
-                            modifier = Modifier.fillMaxWidth()
-                        )
+                    // Transaction Type selector
+                    Text("TRANSACTION TYPE", color = specs.contentSecondary, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        listOf("BORROW" to "Borrow", "GIVE" to "Give", "REPAY" to "Repay", "RECEIVE" to "Receive").forEach { (v, l) ->
+                            val active = typeSelected == v
+                            Button(
+                                onClick = { typeSelected = v },
+                                modifier = Modifier.weight(1f),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (active) specs.activeContainer else specs.inactiveContainer
+                                ),
+                                shape = RoundedCornerShape(6.dp),
+                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp)
+                            ) {
+                                Text(l, color = if (active) specs.onActiveContainer else specs.contentPrimary, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
                     }
 
                     TextField(
-                        value = notes,
-                        onValueChange = { notes = it },
-                        label = { Text("Notes / Description") },
+                        value = amountStr,
+                        onValueChange = { amountStr = it },
+                        label = { Text("Amount ($currency)") },
                         colors = TextFieldDefaults.colors(
                             focusedTextColor = specs.contentPrimary,
                             unfocusedTextColor = specs.contentPrimary,
@@ -2149,12 +2513,269 @@ fun LoansScreen(
                         modifier = Modifier.fillMaxWidth()
                     )
 
-                    // Direction selection
-                    Text("DIRECTION", color = specs.contentSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
+                    // Account Selection Dropdown
+                    Text("ASSOCIATED VAULT / ACCOUNT", color = specs.contentSecondary, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(specs.inactiveContainer)
+                                .border(1.dp, specs.inactiveContainerBorder, RoundedCornerShape(8.dp))
+                                .clickable { accountMenuExpanded = true }
+                                .padding(14.dp)
+                        ) {
+                            Text(accountSelected?.name ?: "No accounts created!", color = specs.contentPrimary, fontWeight = FontWeight.Bold)
+                        }
+                        DropdownMenu(expanded = accountMenuExpanded, onDismissRequest = { accountMenuExpanded = false }) {
+                            accounts.forEach { acc ->
+                                DropdownMenuItem(
+                                    text = { Text("${acc.name} (${acc.type}) • $currency${acc.balance.toInt()}") },
+                                    onClick = {
+                                        accountSelected = acc
+                                        accountMenuExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    TextField(
+                        value = noteStr,
+                        onValueChange = { noteStr = it },
+                        label = { Text("Note / Remarks") },
+                        colors = TextFieldDefaults.colors(
+                            focusedTextColor = specs.contentPrimary,
+                            unfocusedTextColor = specs.contentPrimary,
+                            focusedContainerColor = specs.inactiveContainer,
+                            unfocusedContainerColor = specs.inactiveContainer
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val amount = amountStr.toDoubleOrNull() ?: 0.0
+                        val p = selectedProfile
+                        val acc = accountSelected
+                        if (p != null && acc != null && amount > 0.0) {
+                            val actionNote = noteStr.ifBlank {
+                                when (typeSelected) {
+                                    "BORROW" -> "Borrowed from ${p.name}"
+                                    "GIVE" -> "Gave to ${p.name}"
+                                    "REPAY" -> "Repaid ${p.name}"
+                                    "RECEIVE" -> "Received from ${p.name}"
+                                    else -> "Activity with ${p.name}"
+                                }
+                            }
+                            viewModel.addSoftLoanTransaction(
+                                profileId = p.id,
+                                type = typeSelected,
+                                amount = amount,
+                                accountId = acc.id,
+                                note = actionNote
+                            )
+                            showAddSoftTxDialog = false
+                        }
+                    }
+                ) {
+                    Text("Save", color = specs.activeContainer, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAddSoftTxDialog = false }) {
+                    Text("Cancel", color = specs.contentSecondary)
+                }
+            }
+        )
+    }
+
+    // --- ADD FORMAL LENDER DIALOG ---
+    if (showAddFormalLenderDialog) {
+        var name by remember { mutableStateOf("") }
+        var lenderNotes by remember { mutableStateOf("") }
+
+        AlertDialog(
+            onDismissRequest = { showAddFormalLenderDialog = false },
+            title = { Text("Add Formal Lender", color = specs.contentPrimary, fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    TextField(
+                        value = name,
+                        onValueChange = { name = it },
+                        label = { Text("Bank / Institution Name") },
+                        colors = TextFieldDefaults.colors(
+                            focusedTextColor = specs.contentPrimary,
+                            unfocusedTextColor = specs.contentPrimary,
+                            focusedContainerColor = specs.inactiveContainer,
+                            unfocusedContainerColor = specs.inactiveContainer
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    TextField(
+                        value = lenderNotes,
+                        onValueChange = { lenderNotes = it },
+                        label = { Text("Notes (Branches, Officers...)") },
+                        colors = TextFieldDefaults.colors(
+                            focusedTextColor = specs.contentPrimary,
+                            unfocusedTextColor = specs.contentPrimary,
+                            focusedContainerColor = specs.inactiveContainer,
+                            unfocusedContainerColor = specs.inactiveContainer
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        if (name.isNotBlank()) {
+                            viewModel.insertFormalLender(name, lenderNotes)
+                            showAddFormalLenderDialog = false
+                        }
+                    }
+                ) {
+                    Text("Add", color = specs.activeContainer, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAddFormalLenderDialog = false }) {
+                    Text("Cancel", color = specs.contentSecondary)
+                }
+            }
+        )
+    }
+
+    // --- ADD FORMAL LOAN DIALOG ---
+    if (showAddFormalLoanDialog) {
+        var selectedLender by remember { mutableStateOf<FormalLender?>(formalLenders.firstOrNull()) }
+        var loanAmtStr by remember { mutableStateOf("") }
+        var interestStr by remember { mutableStateOf("") }
+        var emiStr by remember { mutableStateOf("") }
+        var direction by remember { mutableStateOf("BORROWED") } // BORROWED / LENT
+        var startDateStr by remember { mutableStateOf(SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())) }
+        var dueDateStr by remember { mutableStateOf("") }
+        var statusSelection by remember { mutableStateOf("ACTIVE") }
+        var loanNotes by remember { mutableStateOf("") }
+
+        var lenderMenuExpanded by remember { mutableStateOf(false) }
+
+        AlertDialog(
+            onDismissRequest = { showAddFormalLoanDialog = false },
+            title = { Text("Create Formal Facility", color = specs.contentPrimary, fontWeight = FontWeight.Bold) },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text("SELECT REGISTERED LENDER", color = specs.contentSecondary, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(specs.inactiveContainer)
+                                .border(1.dp, specs.inactiveContainerBorder, RoundedCornerShape(8.dp))
+                                .clickable { lenderMenuExpanded = true }
+                                .padding(14.dp)
+                        ) {
+                            Text(selectedLender?.name ?: "Please create a Lender profile first!", color = specs.contentPrimary, fontWeight = FontWeight.Bold)
+                        }
+                        DropdownMenu(expanded = lenderMenuExpanded, onDismissRequest = { lenderMenuExpanded = false }) {
+                            formalLenders.forEach { l ->
+                                DropdownMenuItem(
+                                    text = { Text(l.name) },
+                                    onClick = {
+                                        selectedLender = l
+                                        lenderMenuExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    TextField(
+                        value = loanAmtStr,
+                        onValueChange = { loanAmtStr = it },
+                        label = { Text("Principal Amount ($currency)") },
+                        colors = TextFieldDefaults.colors(
+                            focusedTextColor = specs.contentPrimary,
+                            unfocusedTextColor = specs.contentPrimary,
+                            focusedContainerColor = specs.inactiveContainer,
+                            unfocusedContainerColor = specs.inactiveContainer
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    TextField(
+                        value = interestStr,
+                        onValueChange = { interestStr = it },
+                        label = { Text("Interest Rate % APR") },
+                        colors = TextFieldDefaults.colors(
+                            focusedTextColor = specs.contentPrimary,
+                            unfocusedTextColor = specs.contentPrimary,
+                            focusedContainerColor = specs.inactiveContainer,
+                            unfocusedContainerColor = specs.inactiveContainer
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    TextField(
+                        value = emiStr,
+                        onValueChange = { emiStr = it },
+                        label = { Text("EMI / Installment Amount") },
+                        colors = TextFieldDefaults.colors(
+                            focusedTextColor = specs.contentPrimary,
+                            unfocusedTextColor = specs.contentPrimary,
+                            focusedContainerColor = specs.inactiveContainer,
+                            unfocusedContainerColor = specs.inactiveContainer
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    TextField(
+                        value = startDateStr,
+                        onValueChange = { startDateStr = it },
+                        label = { Text("Start Date (YYYY-MM-DD)") },
+                        colors = TextFieldDefaults.colors(
+                            focusedTextColor = specs.contentPrimary,
+                            unfocusedTextColor = specs.contentPrimary,
+                            focusedContainerColor = specs.inactiveContainer,
+                            unfocusedContainerColor = specs.inactiveContainer
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    TextField(
+                        value = dueDateStr,
+                        onValueChange = { dueDateStr = it },
+                        label = { Text("Due Date (YYYY-MM-DD)") },
+                        colors = TextFieldDefaults.colors(
+                            focusedTextColor = specs.contentPrimary,
+                            unfocusedTextColor = specs.contentPrimary,
+                            focusedContainerColor = specs.inactiveContainer,
+                            unfocusedContainerColor = specs.inactiveContainer
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    TextField(
+                        value = loanNotes,
+                        onValueChange = { loanNotes = it },
+                        label = { Text("Agreement details / notes") },
+                        colors = TextFieldDefaults.colors(
+                            focusedTextColor = specs.contentPrimary,
+                            unfocusedTextColor = specs.contentPrimary,
+                            focusedContainerColor = specs.inactiveContainer,
+                            unfocusedContainerColor = specs.inactiveContainer
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Text("FACILITY DIRECTION", color = specs.contentSecondary, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(
                             onClick = { direction = "BORROWED" },
                             modifier = Modifier.weight(1f),
@@ -2162,9 +2783,8 @@ fun LoansScreen(
                                 containerColor = if (direction == "BORROWED") specs.activeContainer else specs.inactiveContainer
                             )
                         ) {
-                            Text(if (showFormalLoansMode) "Borrowed From" else "Borrowed From", color = if (direction == "BORROWED") specs.onActiveContainer else specs.contentPrimary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                            Text("Borrowed", color = if (direction == "BORROWED") specs.onActiveContainer else specs.contentPrimary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                         }
-
                         Button(
                             onClick = { direction = "LENT" },
                             modifier = Modifier.weight(1f),
@@ -2172,29 +2792,7 @@ fun LoansScreen(
                                 containerColor = if (direction == "LENT") specs.activeContainer else specs.inactiveContainer
                             )
                         ) {
-                            Text(if (showFormalLoansMode) "Lent To / Assets" else "Given To", color = if (direction == "LENT") specs.onActiveContainer else specs.contentPrimary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                        }
-                    }
-
-                    if (showFormalLoansMode) {
-                        Text("STATUS", color = specs.contentSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            listOf("ACTIVE", "OVERDUE", "PAID").forEach { statusName ->
-                                val selected = statusSelection == statusName
-                                Button(
-                                    onClick = { statusSelection = statusName },
-                                    modifier = Modifier.weight(1f),
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = if (selected) specs.activeContainer else specs.inactiveContainer
-                                    ),
-                                    contentPadding = PaddingValues(horizontal = 4.dp)
-                                ) {
-                                    Text(statusName, color = if (selected) specs.onActiveContainer else specs.contentPrimary, fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                                }
-                            }
+                            Text("Lent (Asset)", color = if (direction == "LENT") specs.onActiveContainer else specs.contentPrimary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -2202,10 +2800,11 @@ fun LoansScreen(
             confirmButton = {
                 TextButton(
                     onClick = {
-                        val amount = loanAmountStr.toDoubleOrNull() ?: 0.0
-                        if (borrowerOrLender.isNotEmpty() && amount > 0.0) {
-                            val interest = interestRateStr.toDoubleOrNull() ?: 0.0
-                            val emi = emiAmountStr.toDoubleOrNull() ?: 0.0
+                        val amount = loanAmtStr.toDoubleOrNull() ?: 0.0
+                        val lender = selectedLender
+                        if (lender != null && amount > 0.0) {
+                            val interest = interestStr.toDoubleOrNull() ?: 0.0
+                            val emi = emiStr.toDoubleOrNull() ?: 0.0
                             val nextDue = try {
                                 val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
                                 sdf.parse(dueDateStr.ifEmpty { startDateStr })?.time ?: System.currentTimeMillis()
@@ -2214,8 +2813,8 @@ fun LoansScreen(
                             }
                             
                             viewModel.addLoan(
-                                type = if (showFormalLoansMode) "FORMAL" else "SOFT",
-                                borrowerOrLender = borrowerOrLender,
+                                type = "FORMAL",
+                                borrowerOrLender = lender.name,
                                 amount = amount,
                                 interest = interest,
                                 emi = emi,
@@ -2223,10 +2822,10 @@ fun LoansScreen(
                                 nextDue = nextDue,
                                 startDate = startDateStr,
                                 dueDateString = dueDateStr,
-                                notes = notes,
-                                status = if (showFormalLoansMode) statusSelection else "ACTIVE"
+                                notes = loanNotes,
+                                status = statusSelection
                             )
-                            showAddLoanDialog = false
+                            showAddFormalLoanDialog = false
                         }
                     }
                 ) {
@@ -2234,11 +2833,314 @@ fun LoansScreen(
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showAddLoanDialog = false }) {
+                TextButton(onClick = { showAddFormalLoanDialog = false }) {
                     Text("Cancel", color = specs.contentSecondary)
                 }
             }
         )
+    }
+
+    // --- RELATIONSHIP DETAIL PROFILE STATEMENT & RUNNING BALANCE LEDGER POPUP ---
+    if (selectedSoftProfileForDetail.value != null) {
+        val profile = selectedSoftProfileForDetail.value!!
+        val profileTx = softLoanTransactions.filter { it.softLoanProfileId == profile.id }.sortedBy { it.timestamp }
+
+        // Compute Running balance Bank Statement style
+        var runningBal = 0.0
+        val timelineLedger = profileTx.map { tx ->
+            val change = when (tx.softLoanType) {
+                "GIVE", "REPAY" -> tx.amount
+                "BORROW", "RECEIVE" -> -tx.amount
+                else -> 0.0
+            }
+            runningBal += change
+            tx to runningBal
+        }
+
+        val totalBorrowed = profileTx.filter { it.softLoanType == "BORROW" }.sumOf { it.amount }
+        val totalGiven = profileTx.filter { it.softLoanType == "GIVE" }.sumOf { it.amount }
+        val totalRepaid = profileTx.filter { it.softLoanType == "REPAY" }.sumOf { it.amount }
+        val totalReceived = profileTx.filter { it.softLoanType == "RECEIVE" }.sumOf { it.amount }
+
+        val net = (totalGiven + totalRepaid) - (totalBorrowed + totalReceived)
+        val payable = if (net < 0) -net else 0.0
+        val receivable = if (net > 0) net else 0.0
+
+        androidx.compose.ui.window.Dialog(
+            onDismissRequest = { selectedSoftProfileForDetail.value = null },
+            properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(0.92f)
+                    .fillMaxHeight(0.85f)
+                    .clip(RoundedCornerShape(24.dp))
+                    .aureumGlass(shape = RoundedCornerShape(24.dp))
+                    .padding(20.dp)
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    // Header
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text("RELATIONSHIP LEDGER", color = specs.contentSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                            Text(profile.name, color = specs.contentPrimary, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                        }
+                        IconButton(onClick = { selectedSoftProfileForDetail.value = null }) {
+                            Text("✕", color = specs.contentPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(specs.inactiveContainerBorder))
+
+                    // Contact Details / notes
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Phone: ${profile.phoneNumber ?: "N/A"}\nNotes: ${profile.notes.ifBlank { "None" }}",
+                            color = specs.contentSecondary,
+                            fontSize = 12.sp,
+                            style = androidx.compose.ui.text.TextStyle(lineHeight = 16.sp)
+                        )
+                        
+                        Button(
+                            onClick = {
+                                viewModel.deleteSoftLoanProfile(profile)
+                                selectedSoftProfileForDetail.value = null
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = ExpenseCoral.copy(alpha = 0.2f)),
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                            modifier = Modifier.height(30.dp)
+                        ) {
+                            Text("DELETE PROFILE", color = ExpenseCoral, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    // Profile Statement Statistics Block
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(specs.inactiveContainer)
+                            .border(1.dp, specs.inactiveContainerBorder, RoundedCornerShape(14.dp))
+                            .padding(12.dp)
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("SUMMARY BALANCE STATISTICS", color = specs.contentSecondary, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text("Total Borrowed: $currency${totalBorrowed.toInt()}", color = specs.contentSecondary, fontSize = 11.sp)
+                                Text("Total Lent: $currency${totalGiven.toInt()}", color = specs.contentSecondary, fontSize = 11.sp)
+                            }
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text("Total Repaid: $currency${totalRepaid.toInt()}", color = specs.contentSecondary, fontSize = 11.sp)
+                                Text("Total Received: $currency${totalReceived.toInt()}", color = specs.contentSecondary, fontSize = 11.sp)
+                            }
+                            Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(specs.inactiveContainerBorder))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("CURRENT LEDGER BALANCE:", color = specs.contentPrimary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                Text(
+                                    text = if (net > 0.0) "Receivable: $currency${receivable.toInt()}"
+                                           else if (net < 0.0) "Payable: $currency${payable.toInt()}"
+                                           else "Fully Settled (0.0)",
+                                    color = if (net > 0.0) AssetGreen else if (net < 0.0) ExpenseCoral else specs.contentPrimary,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp
+                                )
+                            }
+                        }
+                    }
+
+                    // Bank Statement running balance ledger timeline
+                    Text("LEDGER STATEMENT RUNNING BALANCE", color = specs.contentSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    
+                    if (timelineLedger.isEmpty()) {
+                        Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                            Text("No transactions logged with this profile.", color = specs.contentSecondary, fontSize = 12.sp)
+                        }
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier.weight(1f).fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            items(timelineLedger.reversed()) { (tx, bal) ->
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(if (specs.isDark) Color.White.copy(alpha = 0.03f) else specs.inactiveContainer.copy(alpha = 0.5f))
+                                        .border(1.dp, if (specs.isDark) Color.White.copy(alpha = 0.06f) else specs.inactiveContainerBorder.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
+                                        .padding(10.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column {
+                                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .clip(RoundedCornerShape(4.dp))
+                                                        .background(
+                                                            if (tx.softLoanType == "GIVE" || tx.softLoanType == "REPAY") AssetGreen.copy(alpha = 0.15f)
+                                                            else ExpenseCoral.copy(alpha = 0.15f)
+                                                        )
+                                                        .padding(horizontal = 4.dp, vertical = 1.dp)
+                                                ) {
+                                                    Text(tx.softLoanType ?: "ACTIVITY", color = if (tx.softLoanType == "GIVE" || tx.softLoanType == "REPAY") AssetGreen else ExpenseCoral, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                                                }
+                                                Text(
+                                                    text = SimpleDateFormat("MMM dd, yyyy", Locale.getDefault()).format(Date(tx.timestamp)),
+                                                    color = specs.contentSecondary,
+                                                    fontSize = 10.sp
+                                                )
+                                            }
+                                            Spacer(modifier = Modifier.height(2.dp))
+                                            Text(tx.note, color = specs.contentPrimary, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                                        }
+
+                                        Column(horizontalAlignment = Alignment.End) {
+                                            val sign = if (tx.softLoanType == "GIVE" || tx.softLoanType == "REPAY") "+" else "-"
+                                            Text(
+                                                text = "$sign$currency${tx.amount.toInt()}",
+                                                color = if (tx.softLoanType == "GIVE" || tx.softLoanType == "REPAY") AssetGreen else ExpenseCoral,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 13.sp,
+                                                fontFamily = FontFamily.Monospace
+                                            )
+                                            Text(
+                                                text = "Bal: $currency${bal.toInt()}",
+                                                color = if (bal >= 0.0) AssetGreen else ExpenseCoral,
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                fontFamily = FontFamily.Monospace
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // --- FORMAL LENDER DETAILS & HISTORY DIALOG ---
+    if (selectedFormalLenderForDetail.value != null) {
+        val lender = selectedFormalLenderForDetail.value!!
+        val associatedLoans = loans.filter { it.type == "FORMAL" && it.borrowerOrLender == lender.name }
+
+        androidx.compose.ui.window.Dialog(
+            onDismissRequest = { selectedFormalLenderForDetail.value = null },
+            properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(0.92f)
+                    .fillMaxHeight(0.8f)
+                    .clip(RoundedCornerShape(24.dp))
+                    .aureumGlass(shape = RoundedCornerShape(24.dp))
+                    .padding(20.dp)
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text("LENDER ACCOUNT PROFILE", color = specs.contentSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                            Text(lender.name, color = specs.contentPrimary, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                        }
+                        IconButton(onClick = { selectedFormalLenderForDetail.value = null }) {
+                            Text("✕", color = specs.contentPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(specs.inactiveContainerBorder))
+
+                    Text("Notes: ${lender.notes.ifBlank { "No description notes logged." }}", color = specs.contentSecondary, fontSize = 12.sp)
+
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("Active loans associated: ${associatedLoans.count { !it.isCompleted }}", color = specs.contentPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        Button(
+                            onClick = {
+                                viewModel.deleteFormalLender(lender)
+                                selectedFormalLenderForDetail.value = null
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = ExpenseCoral.copy(alpha = 0.2f)),
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                            modifier = Modifier.height(28.dp)
+                        ) {
+                            Text("DELETE PROFILE", color = ExpenseCoral, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    Text("ASSOCIATED CREDIT FACILITIES", color = specs.contentSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+
+                    if (associatedLoans.isEmpty()) {
+                        Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                            Text("No credit facilities mapped to this lender.", color = specs.contentSecondary)
+                        }
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier.weight(1f).fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            items(associatedLoans) { loan ->
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(14.dp))
+                                        .background(if (specs.isDark) Color.White.copy(alpha = 0.03f) else specs.inactiveContainer)
+                                        .border(1.dp, if (specs.isDark) Color.White.copy(alpha = 0.06f) else specs.inactiveContainerBorder, RoundedCornerShape(14.dp))
+                                        .padding(12.dp)
+                                ) {
+                                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                            Text(
+                                                text = if (loan.direction == "BORROWED") "Borrowed (Liability)" else "Lent (Asset)",
+                                                color = if (loan.direction == "BORROWED") ExpenseCoral else AssetGreen,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 11.sp
+                                            )
+                                            Text("APR: ${loan.interestRate}%", color = specs.contentPrimary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                        Text(
+                                            text = "Outstanding: $currency${loan.outstandingAmount.toInt()} / Principal: $currency${loan.loanAmount.toInt()}",
+                                            color = specs.contentPrimary,
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            fontFamily = FontFamily.Monospace
+                                        )
+                                        Text("Date: ${loan.startDate} • Due: ${loan.dueDateString}", color = specs.contentSecondary, fontSize = 10.sp)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -2315,8 +3217,8 @@ fun FormalRepayTimelineCard(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(12.dp))
-                    .background(specs.inactiveContainer)
-                    .border(1.dp, specs.inactiveContainerBorder, RoundedCornerShape(12.dp))
+                    .background(if (specs.isDark) Color.White.copy(alpha = 0.03f) else specs.inactiveContainer)
+                    .border(1.dp, if (specs.isDark) Color.White.copy(alpha = 0.06f) else specs.inactiveContainerBorder, RoundedCornerShape(12.dp))
                     .padding(12.dp)
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -2411,112 +3313,6 @@ fun FormalRepayTimelineCard(
                 }
             }
         )
-    }
-}
-
-@Composable
-fun SoftLoanFlowCard(
-    loan: Loan,
-    currency: String,
-    onMarkReturned: () -> Unit
-) {
-    val isGiving = loan.direction == "LENT"
-    val specs = AureumThemeStyles.specs
-
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(18.dp))
-            .background(specs.inactiveContainer)
-            .border(1.dp, specs.inactiveContainerBorder, RoundedCornerShape(18.dp))
-            .padding(16.dp)
-    ) {
-        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        modifier = Modifier
-                            .size(36.dp)
-                            .clip(CircleShape)
-                            .background(if (isGiving) AssetGreen.copy(alpha = 0.15f) else ExpenseCoral.copy(alpha = 0.15f)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            loan.borrowerOrLender.take(2).uppercase(),
-                            color = if (isGiving) AssetGreen else ExpenseCoral,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 12.sp
-                        )
-                    }
-                    Column {
-                        Text(loan.borrowerOrLender, color = specs.contentPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                        Text(if (isGiving) "YOU LENT" else "YOU BORROWED", color = specs.contentSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                    }
-                }
-
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(
-                        "$currency${loan.outstandingAmount.toInt()}",
-                        color = if (isGiving) AssetGreen else ExpenseCoral,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 18.sp,
-                        fontFamily = FontFamily.Monospace
-                    )
-                    AureumVectorIcon(
-                        name = "transfer",
-                        tint = if (isGiving) AssetGreen else ExpenseCoral,
-                        modifier = Modifier.size(16.dp)
-                    )
-                }
-            }
-
-            // Arrow visualization diagram
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 4.dp),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = if (isGiving) " Friend's Account ←─── $currency${loan.outstandingAmount.toInt()} ─── You"
-                           else " Friend's Account ─── $currency${loan.outstandingAmount.toInt()} ───→ You",
-                    color = specs.contentSecondary,
-                    fontSize = 11.sp,
-                    fontFamily = FontFamily.Monospace
-                )
-            }
-
-            if (loan.notes.isNotEmpty()) {
-                Text("Note: ${loan.notes}", color = specs.contentSecondary, fontSize = 12.sp)
-            }
-            Text("Date: ${loan.startDate}", color = specs.contentSecondary, fontSize = 11.sp)
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                val statusText = if (loan.isCompleted) "Returned" else "Pending"
-                val statusColor = if (loan.isCompleted) AssetGreen else ExpenseCoral
-                Text("STATUS: $statusText", color = statusColor, fontWeight = FontWeight.Bold, fontSize = 11.sp)
-
-                if (!loan.isCompleted) {
-                    Button(
-                        onClick = onMarkReturned,
-                        colors = ButtonDefaults.buttonColors(containerColor = specs.activeContainer),
-                        shape = RoundedCornerShape(10.dp),
-                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
-                    ) {
-                        Text("Settle / Returned", color = specs.onActiveContainer, fontWeight = FontWeight.Bold, fontSize = 11.sp)
-                    }
-                }
-            }
-        }
     }
 }
 

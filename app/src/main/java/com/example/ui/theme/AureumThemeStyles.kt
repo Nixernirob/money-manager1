@@ -19,6 +19,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.runtime.remember
 
 @Immutable
 data class AureumStyleSpecs(
@@ -263,4 +268,36 @@ fun Modifier.aureumBackground(): Modifier {
             )
         }
     }
+}
+
+/**
+ * Custom Jetpack Compose modifier that implements a Framer Motion-like interactive scale and hover glow effect
+ * on click/touch/pointer-enter events to elevate the premium glassmorphic feel of cards and buttons.
+ */
+@Composable
+fun Modifier.framerHoverEffect(
+    interactionSource: androidx.compose.foundation.interaction.MutableInteractionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+): Modifier {
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val isHovered by interactionSource.collectIsHoveredAsState()
+
+    val scale by animateFloatAsState(
+        targetValue = when {
+            isPressed -> 0.96f
+            isHovered -> 1.03f
+            else -> 1.0f
+        },
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMedium
+        ),
+        label = "framer_scale"
+    )
+
+    return this
+        .graphicsLayer {
+            scaleX = scale
+            scaleY = scale
+        }
+        .hoverable(interactionSource)
 }
