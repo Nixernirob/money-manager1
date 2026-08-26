@@ -1,9 +1,14 @@
-name: Build Android APK
+name: Build Android APK & Release
 
 on:
   push:
-    branches: [ main, master ] # আপনি কোড পুশ করলেই অটোমেটিক বিল্ড শুরু হবে
-  workflow_dispatch: # ম্যানুয়ালি রান করার অপশনও সচল থাকবে
+    branches: [ main, master ]
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -22,18 +27,15 @@ jobs:
     - name: Setup Android SDK
       uses: android-actions/setup-android@v3
 
-    # গ্লোবাল গ্রেডল সেটআপ
     - name: Setup Gradle
       uses: gradle/actions/setup-gradle@v4
 
-    # মিসিং debug.keystore ফাইলটি স্বয়ংক্রিয়ভাবে তৈরি করার কমান্ড
     - name: Generate missing debug.keystore
       run: |
         keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
         find . -type d -name "app" -exec cp debug.keystore {} \;
         cp debug.keystore /home/runner/work/money-manager1/money-manager1/ || true
 
-    # বিল্ড রান করা
     - name: Build with Gradle
       run: |
         GRADLEW_PATH=$(find . -name "gradlew" | head -n 1)
@@ -51,9 +53,31 @@ jobs:
       env:
         GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
 
-    # তৈরি হওয়া APK ফাইল আপলোড করা
+    - name: Find and Rename APK
+      run: |
+        APK_FILE=$(find . -name "*.apk" -path "*/build/outputs/apk/debug/*" | head -n 1)
+        if [ -n "$APK_FILE" ]; then
+          cp "$APK_FILE" ./aureum-wallet-release.apk
+        fi
+
     - name: Upload APK Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: my-app-debug-apk
-        path: '**/build/outputs/apk/debug/*.apk'
+        name: aureum-wallet-apk
+        path: './aureum-wallet-release.apk'
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+      with:
+        tag_name: ${{ github.ref_name == 'main' && 'v1.0.0' || (github.ref_name == 'master' && 'v1.0.0' || github.ref_name) }}
+        name: "Aureum Wallet ${{ github.ref_name == 'main' && 'v1.0.0' || (github.ref_name == 'master' && 'v1.0.0' || github.ref_name) }}"
+        body: |
+          ## Aureum Wallet Release
+          - Automated build generated via GitHub Actions.
+          - Download the attached `.apk` file below and install it directly on your Android device.
+        files: ./aureum-wallet-release.apk
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
