@@ -2,10 +2,12 @@ package com.example
 
 import android.os.Bundle
 import android.view.WindowManager
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.fragment.app.FragmentActivity
+import androidx.biometric.BiometricManager
+import androidx.biometric.BiometricPrompt
 import androidx.compose.animation.*
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -19,7 +21,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -30,12 +31,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import com.example.ui.components.AureumVectorIcon
 import com.example.ui.theme.*
 import com.example.ui.viewmodel.AureumViewModel
 import com.example.ui.screens.*
 
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
     private val viewModel: AureumViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -46,6 +48,7 @@ class MainActivity : ComponentActivity() {
             val secureMode by viewModel.secureModeEnabled.collectAsState()
             val isLocked by viewModel.isLocked.collectAsState()
             val isDarkTheme by viewModel.isDarkTheme.collectAsState()
+            val isBiometricEnabled by viewModel.isBiometricEnabled.collectAsState()
 
             // Dynamic secure Flag integration
             LaunchedEffect(secureMode) {
@@ -53,6 +56,13 @@ class MainActivity : ComponentActivity() {
                     window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
                 } else {
                     window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                }
+            }
+
+            // Trigger biometric prompt on lock if enabled
+            LaunchedEffect(isLocked) {
+                if (isLocked && isBiometricEnabled) {
+                    launchBiometricUnlock()
                 }
             }
 
@@ -71,11 +81,45 @@ class MainActivity : ComponentActivity() {
                         enter = fadeIn() + slideInVertically { it },
                         exit = fadeOut() + slideOutVertically { it }
                     ) {
-                        AppLockscreenOverlay(viewModel = viewModel)
+                        AppLockscreenOverlay(
+                            viewModel = viewModel,
+                            onBiometricClick = { launchBiometricUnlock() }
+                        )
                     }
                 }
             }
         }
+    }
+
+    fun launchBiometricUnlock() {
+        val executor = ContextCompat.getMainExecutor(this)
+        val biometricPrompt = BiometricPrompt(
+            this,
+            executor,
+            object : BiometricPrompt.AuthenticationCallback() {
+                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                    super.onAuthenticationSucceeded(result)
+                    viewModel.unlockApp()
+                }
+
+                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                    super.onAuthenticationError(errorCode, errString)
+                    // User cancelled or fallback to PIN
+                }
+
+                override fun onAuthenticationFailed() {
+                    super.onAuthenticationFailed()
+                }
+            }
+        )
+
+        val promptInfo = BiometricPrompt.PromptInfo.Builder()
+            .setTitle("Unlock Aureum")
+            .setSubtitle("Authenticate using your fingerprint or screen lock")
+            .setNegativeButtonText("Use PIN")
+            .build()
+
+        biometricPrompt.authenticate(promptInfo)
     }
 }
 
@@ -88,7 +132,7 @@ fun MainApplicationChrome(viewModel: AureumViewModel) {
     var showTransactionCreator by remember { mutableStateOf(false) }
 
     val editingTx by viewModel.editingTransaction.collectAsState()
-    androidx.compose.runtime.LaunchedEffect(editingTx) {
+    LaunchedEffect(editingTx) {
         if (editingTx != null) {
             showTransactionCreator = true
         }
@@ -98,10 +142,15 @@ fun MainApplicationChrome(viewModel: AureumViewModel) {
         modifier = Modifier.fillMaxSize(),
         containerColor = Color.Transparent,
         bottomBar = {
-            // Elegant floating docking navigation bar custom styled
+            // High visibility floating docking navigation bar
             NavigationBarCustomDock(
                 activeTab = activeTab,
-                onTabSelect = { viewModel.activeTab.value = it },
+                onTabSelect = { tabId ->
+                    // Automatically close transaction sheet if open when tapping nav bar
+                    showTransactionCreator = false
+                    viewModel.editingTransaction.value = null
+                    viewModel.activeTab.value = tabId
+                },
                 onCenterAdd = { showTransactionCreator = true }
             )
         },
@@ -177,107 +226,93 @@ fun NavigationBarCustomDock(
     modifier: Modifier = Modifier
 ) {
     val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
+    val specs = AureumThemeStyles.specs
 
-    val dockBackground = if (isDark) Color(0xE6141B2D) else Color.White
-    val dockBorder = if (isDark) Color.White.copy(alpha = 0.08f) else Color(0xFFE0E2EC)
-    val activeColor = if (isDark) MidnightTertiary else Color(0xFF005AC1)
-    val inactiveColor = if (isDark) Color.White else Color(0xFF74777F)
-    val centerButtonBg = if (isDark) MidnightTertiary else Color(0xFF005AC1)
-    val centerButtonTint = if (isDark) Color.Black else Color.White
+    val dockBackground = if (isDark) Color(0xF0181C24) else Color.White
+    val dockBorder = if (isDark) Color.White.copy(alpha = 0.12f) else Color(0xFFE2E8F0)
+    val activeColor = if (isDark) NeonLime else CardBlack
+    // High-contrast, high-opacity inactive icons for clear visibility
+    val inactiveColor = if (isDark) Color(0xFF94A3B8) else Color(0xFF64748B)
 
-    // Guidelines command: Use safe drawing system navigation bar safe padding offset
     Box(
         modifier = modifier
             .fillMaxWidth()
             .windowInsetsPadding(WindowInsets.navigationBars)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .padding(horizontal = 20.dp, vertical = 10.dp),
         contentAlignment = Alignment.BottomCenter
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(64.dp)
-                .clip(RoundedCornerShape(32.dp))
+                .height(60.dp)
+                .clip(RoundedCornerShape(30.dp))
                 .background(dockBackground)
-                .border(1.dp, dockBorder, RoundedCornerShape(32.dp))
+                .border(1.dp, dockBorder, RoundedCornerShape(30.dp))
                 .padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+            horizontalArrangement = Arrangement.SpaceAround
         ) {
-            listOf(
-                TabItem("HOME", "home", "Home"),
-                TabItem("TRANSACTIONS", "transfer", "Ledger"),
-                TabItem("STATS", "stats", "Activity")
-            ).forEach { tab ->
-                val active = activeTab == tab.id
-                val alphaState by animateFloatAsState(targetValue = if (active) 1f else 0.45f)
-                val targetColor = if (active) activeColor else inactiveColor.copy(alpha = alphaState)
+            val tabs = listOf(
+                TabItem("HOME", "wallet_dock", "Home"),
+                TabItem("TRANSACTIONS", "receipt_long", "Ledger"),
+                TabItem("ADD", "add", "Add"),
+                TabItem("LOANS", "cards_dock", "Activity"),
+                TabItem("MORE", "hexagon_gear", "Settings")
+            )
+
+            tabs.forEach { tab ->
+                val isAdd = tab.id == "ADD"
+                val active = !isAdd && (activeTab == tab.id || (tab.id == "HOME" && activeTab == "ACCOUNTS"))
+                val targetColor = if (active) activeColor else inactiveColor
                 
                 Box(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxHeight()
-                        .clickable { onTabSelect(tab.id) },
+                        .clip(CircleShape)
+                        .clickable { 
+                            if (isAdd) {
+                                onCenterAdd()
+                            } else {
+                                onTabSelect(tab.id)
+                            }
+                        },
                     contentAlignment = Alignment.Center
                 ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        AureumVectorIcon(
-                            name = tab.icon,
-                            tint = targetColor,
-                            modifier = Modifier.size(22.dp)
-                        )
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = tab.label,
-                            color = targetColor,
-                            fontSize = 8.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                }
-            }
-
-            // Central add interactive key launcher
-            Box(
-                modifier = Modifier
-                    .size(46.dp)
-                    .clip(CircleShape)
-                    .background(centerButtonBg)
-                    .clickable { onCenterAdd() },
-                contentAlignment = Alignment.Center
-            ) {
-                AureumVectorIcon(name = "add", tint = centerButtonTint, modifier = Modifier.size(20.dp))
-            }
-
-            listOf(
-                TabItem("LOANS", "loans", "Loan"),
-                TabItem("ACCOUNTS", "bank", "Accounts"),
-                TabItem("MORE", "settings", "Preferences")
-            ).forEach { tab ->
-                val active = activeTab == tab.id
-                val alphaState by animateFloatAsState(targetValue = if (active) 1f else 0.45f)
-                val targetColor = if (active) activeColor else inactiveColor.copy(alpha = alphaState)
-
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxHeight()
-                        .clickable { onTabSelect(tab.id) },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        AureumVectorIcon(
-                            name = tab.icon,
-                            tint = targetColor,
-                            modifier = Modifier.size(22.dp)
-                        )
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = tab.label,
-                            color = targetColor,
-                            fontSize = 8.sp,
-                            fontWeight = FontWeight.Bold
-                        )
+                    if (isAdd) {
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(specs.activeContainer),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            AureumVectorIcon(
+                                name = tab.icon,
+                                tint = specs.onActiveContainer,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    } else {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
+                        ) {
+                            AureumVectorIcon(
+                                name = tab.icon,
+                                tint = targetColor,
+                                modifier = Modifier.size(22.dp)
+                            )
+                            if (active) {
+                                Spacer(modifier = Modifier.height(3.dp))
+                                Box(
+                                    modifier = Modifier
+                                        .size(4.dp)
+                                        .clip(CircleShape)
+                                        .background(targetColor)
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -288,8 +323,12 @@ fun NavigationBarCustomDock(
 data class TabItem(val id: String, val icon: String, val label: String)
 
 @Composable
-fun AppLockscreenOverlay(viewModel: AureumViewModel) {
+fun AppLockscreenOverlay(
+    viewModel: AureumViewModel,
+    onBiometricClick: () -> Unit = {}
+) {
     val pinVal by viewModel.pinInput.collectAsState()
+    val isBiometricEnabled by viewModel.isBiometricEnabled.collectAsState()
     val specs = AureumThemeStyles.specs
 
     Box(
@@ -324,7 +363,7 @@ fun AppLockscreenOverlay(viewModel: AureumViewModel) {
                     letterSpacing = 2.sp
                 )
                 Text(
-                    text = "Access protected. Please insert security code",
+                    text = "Access protected. Enter PIN or authenticate",
                     color = specs.contentSecondary,
                     fontSize = 11.sp
                 )
@@ -355,15 +394,30 @@ fun AppLockscreenOverlay(viewModel: AureumViewModel) {
                     listOf("1", "2", "3"),
                     listOf("4", "5", "6"),
                     listOf("7", "8", "9"),
-                    listOf("", "0", "CLR")
+                    listOf("BIO", "0", "CLR")
                 ).forEach { row ->
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(16.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         row.forEach { d ->
-                            if (d.isBlank()) {
-                                Spacer(modifier = Modifier.weight(1f))
+                            if (d == "BIO") {
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(56.dp)
+                                        .clip(CircleShape)
+                                        .background(specs.inactiveContainer)
+                                        .border(1.dp, specs.inactiveContainerBorder, CircleShape)
+                                        .clickable { onBiometricClick() },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    AureumVectorIcon(
+                                        name = "fingerprint",
+                                        tint = specs.activeContainer,
+                                        modifier = Modifier.size(24.dp)
+                                    )
+                                }
                             } else {
                                 Box(
                                     modifier = Modifier

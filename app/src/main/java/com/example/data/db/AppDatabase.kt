@@ -5,7 +5,7 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 
-@Database(entities = [Account::class, Transaction::class, Loan::class, Category::class, SoftLoanProfile::class, FormalLender::class], version = 4, exportSchema = false)
+@Database(entities = [Account::class, Transaction::class, Loan::class, Category::class, SoftLoanProfile::class, FormalLender::class], version = 5, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun accountDao(): AccountDao
     abstract fun transactionDao(): TransactionDao

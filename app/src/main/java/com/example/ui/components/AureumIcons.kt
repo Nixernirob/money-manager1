@@ -9,6 +9,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -515,6 +516,262 @@ fun AureumVectorIcon(
                 drawCircle(color = tint, center = Offset(w * 0.36f, h * 0.5f), radius = w * 0.22f, style = Stroke(width = strokeWidth))
                 drawCircle(color = tint, center = Offset(w * 0.64f, h * 0.5f), radius = w * 0.22f, style = Stroke(width = strokeWidth))
             }
+            "contactless", "waves" -> {
+                // Contactless 3 concentric wave arcs
+                drawArc(
+                    color = tint,
+                    startAngle = -45f,
+                    sweepAngle = 90f,
+                    useCenter = false,
+                    topLeft = Offset(-w * 0.1f, h * 0.1f),
+                    size = Size(w * 0.5f, h * 0.8f),
+                    style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
+                )
+                drawArc(
+                    color = tint,
+                    startAngle = -45f,
+                    sweepAngle = 90f,
+                    useCenter = false,
+                    topLeft = Offset(w * 0.15f, h * 0.22f),
+                    size = Size(w * 0.5f, h * 0.56f),
+                    style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
+                )
+                drawArc(
+                    color = tint,
+                    startAngle = -45f,
+                    sweepAngle = 90f,
+                    useCenter = false,
+                    topLeft = Offset(w * 0.4f, h * 0.34f),
+                    size = Size(w * 0.45f, h * 0.32f),
+                    style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
+                )
+            }
+            "bell", "notification" -> {
+                // Sleek notification bell outline
+                val bellPath = Path().apply {
+                    moveTo(w * 0.5f, h * 0.15f)
+                    cubicTo(w * 0.35f, h * 0.15f, w * 0.25f, h * 0.35f, w * 0.25f, h * 0.58f)
+                    lineTo(w * 0.15f, h * 0.72f)
+                    lineTo(w * 0.85f, h * 0.72f)
+                    lineTo(w * 0.75f, h * 0.58f)
+                    cubicTo(w * 0.75f, h * 0.35f, w * 0.65f, h * 0.15f, w * 0.5f, h * 0.15f)
+                    close()
+                }
+                drawPath(path = bellPath, color = tint, style = Stroke(width = strokeWidth))
+                // Bell clapper
+                drawArc(
+                    color = tint,
+                    startAngle = 0f,
+                    sweepAngle = 180f,
+                    useCenter = false,
+                    topLeft = Offset(w * 0.4f, h * 0.74f),
+                    size = Size(w * 0.2f, h * 0.14f),
+                    style = Stroke(width = strokeWidth)
+                )
+            }
+            "btc", "bitcoin" -> {
+                // Bitcoin B with two vertical notches
+                drawCircle(color = tint, center = Offset(w * 0.5f, h * 0.5f), radius = w * 0.44f, style = Stroke(width = strokeWidth))
+                // B symbol
+                drawLine(color = tint, start = Offset(w * 0.38f, h * 0.25f), end = Offset(w * 0.38f, h * 0.75f), strokeWidth = strokeWidth)
+                drawLine(color = tint, start = Offset(w * 0.45f, h * 0.18f), end = Offset(w * 0.45f, h * 0.82f), strokeWidth = strokeWidth * 0.7f)
+                drawLine(color = tint, start = Offset(w * 0.55f, h * 0.18f), end = Offset(w * 0.55f, h * 0.82f), strokeWidth = strokeWidth * 0.7f)
+                drawArc(
+                    color = tint,
+                    startAngle = -90f,
+                    sweepAngle = 180f,
+                    useCenter = false,
+                    topLeft = Offset(w * 0.38f, h * 0.28f),
+                    size = Size(w * 0.26f, h * 0.24f),
+                    style = Stroke(width = strokeWidth)
+                )
+                drawArc(
+                    color = tint,
+                    startAngle = -90f,
+                    sweepAngle = 180f,
+                    useCenter = false,
+                    topLeft = Offset(w * 0.38f, h * 0.48f),
+                    size = Size(w * 0.30f, h * 0.26f),
+                    style = Stroke(width = strokeWidth)
+                )
+            }
+            "eth", "ethereum" -> {
+                // Diamond top & bottom
+                val topPath = Path().apply {
+                    moveTo(w * 0.5f, h * 0.12f)
+                    lineTo(w * 0.82f, h * 0.52f)
+                    lineTo(w * 0.5f, h * 0.65f)
+                    lineTo(w * 0.18f, h * 0.52f)
+                    close()
+                }
+                drawPath(path = topPath, color = tint, style = Stroke(width = strokeWidth))
+                val botPath = Path().apply {
+                    moveTo(w * 0.5f, h * 0.7f)
+                    lineTo(w * 0.82f, h * 0.56f)
+                    lineTo(w * 0.5f, h * 0.9f)
+                    lineTo(w * 0.18f, h * 0.56f)
+                    close()
+                }
+                drawPath(path = botPath, color = tint, style = Stroke(width = strokeWidth))
+            }
+            "sol", "solana" -> {
+                // 3 slanted gradient bars
+                drawLine(color = tint, start = Offset(w * 0.2f, h * 0.3f), end = Offset(w * 0.8f, h * 0.3f), strokeWidth = strokeWidth * 1.3f, cap = StrokeCap.Round)
+                drawLine(color = tint, start = Offset(w * 0.25f, h * 0.5f), end = Offset(w * 0.75f, h * 0.5f), strokeWidth = strokeWidth * 1.3f, cap = StrokeCap.Round)
+                drawLine(color = tint, start = Offset(w * 0.2f, h * 0.7f), end = Offset(w * 0.8f, h * 0.7f), strokeWidth = strokeWidth * 1.3f, cap = StrokeCap.Round)
+            }
+            "usdc" -> {
+                drawCircle(color = tint, center = Offset(w * 0.5f, h * 0.5f), radius = w * 0.42f, style = Stroke(width = strokeWidth))
+                // S shape
+                drawArc(
+                    color = tint,
+                    startAngle = 90f,
+                    sweepAngle = 200f,
+                    useCenter = false,
+                    topLeft = Offset(w * 0.36f, h * 0.3f),
+                    size = Size(w * 0.28f, h * 0.22f),
+                    style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
+                )
+                drawArc(
+                    color = tint,
+                    startAngle = -90f,
+                    sweepAngle = 200f,
+                    useCenter = false,
+                    topLeft = Offset(w * 0.36f, h * 0.48f),
+                    size = Size(w * 0.28f, h * 0.22f),
+                    style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
+                )
+            }
+            "hexagon_gear", "gear_dock" -> {
+                // Modern hexagonal settings dock icon
+                val hexPath = Path().apply {
+                    moveTo(w * 0.5f, h * 0.12f)
+                    lineTo(w * 0.86f, h * 0.31f)
+                    lineTo(w * 0.86f, h * 0.69f)
+                    lineTo(w * 0.5f, h * 0.88f)
+                    lineTo(w * 0.14f, h * 0.69f)
+                    lineTo(w * 0.14f, h * 0.31f)
+                    close()
+                }
+                drawPath(path = hexPath, color = tint, style = Stroke(width = strokeWidth))
+                drawCircle(color = tint, center = Offset(w * 0.5f, h * 0.5f), radius = w * 0.15f, style = Stroke(width = strokeWidth))
+            }
+            "cards_dock" -> {
+                // Dual layered cards dock icon
+                drawRoundRect(
+                    color = tint,
+                    topLeft = Offset(w * 0.18f, h * 0.18f),
+                    size = Size(w * 0.68f, h * 0.52f),
+                    cornerRadius = CornerRadius(w * 0.08f),
+                    style = Stroke(width = strokeWidth)
+                )
+                drawLine(color = tint, start = Offset(w * 0.18f, h * 0.34f), end = Offset(w * 0.86f, h * 0.34f), strokeWidth = strokeWidth)
+            }
+            "gift_dock" -> {
+                // Clean gift box outline
+                drawRoundRect(
+                    color = tint,
+                    topLeft = Offset(w * 0.18f, h * 0.38f),
+                    size = Size(w * 0.64f, h * 0.48f),
+                    cornerRadius = CornerRadius(w * 0.06f),
+                    style = Stroke(width = strokeWidth)
+                )
+                // Ribbon
+                drawLine(color = tint, start = Offset(w * 0.5f, h * 0.38f), end = Offset(w * 0.5f, h * 0.86f), strokeWidth = strokeWidth)
+                drawLine(color = tint, start = Offset(w * 0.18f, h * 0.58f), end = Offset(w * 0.82f, h * 0.58f), strokeWidth = strokeWidth)
+                // Loops
+                drawArc(
+                    color = tint,
+                    startAngle = 180f,
+                    sweepAngle = 180f,
+                    useCenter = false,
+                    topLeft = Offset(w * 0.28f, h * 0.22f),
+                    size = Size(w * 0.22f, h * 0.18f),
+                    style = Stroke(width = strokeWidth)
+                )
+                drawArc(
+                    color = tint,
+                    startAngle = 180f,
+                    sweepAngle = 180f,
+                    useCenter = false,
+                    topLeft = Offset(w * 0.5f, h * 0.22f),
+                    size = Size(w * 0.22f, h * 0.18f),
+                    style = Stroke(width = strokeWidth)
+                )
+            }
+            "wallet_dock" -> {
+                // Clean solid or outlined wallet icon
+                drawRoundRect(
+                    color = tint,
+                    topLeft = Offset(w * 0.15f, h * 0.22f),
+                    size = Size(w * 0.70f, h * 0.56f),
+                    cornerRadius = CornerRadius(w * 0.08f),
+                    style = Stroke(width = strokeWidth)
+                )
+                // Pocket flap
+                drawRoundRect(
+                    color = tint,
+                    topLeft = Offset(w * 0.55f, h * 0.38f),
+                    size = Size(w * 0.32f, h * 0.24f),
+                    cornerRadius = CornerRadius(w * 0.05f),
+                    style = Stroke(width = strokeWidth)
+                )
+                drawCircle(color = tint, center = Offset(w * 0.73f, h * 0.5f), radius = w * 0.035f)
+            }
+            "fingerprint", "biometric" -> {
+                // Biometric fingerprint ridges
+                drawArc(
+                    color = tint,
+                    startAngle = 180f,
+                    sweepAngle = 180f,
+                    useCenter = false,
+                    topLeft = Offset(w * 0.2f, h * 0.15f),
+                    size = Size(w * 0.6f, h * 0.5f),
+                    style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
+                )
+                drawArc(
+                    color = tint,
+                    startAngle = 180f,
+                    sweepAngle = 180f,
+                    useCenter = false,
+                    topLeft = Offset(w * 0.32f, h * 0.28f),
+                    size = Size(w * 0.36f, h * 0.34f),
+                    style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
+                )
+                // Left & Right descending ridge lines
+                drawLine(color = tint, start = Offset(w * 0.2f, h * 0.4f), end = Offset(w * 0.2f, h * 0.75f), strokeWidth = strokeWidth, cap = StrokeCap.Round)
+                drawLine(color = tint, start = Offset(w * 0.32f, h * 0.45f), end = Offset(w * 0.32f, h * 0.82f), strokeWidth = strokeWidth, cap = StrokeCap.Round)
+                drawLine(color = tint, start = Offset(w * 0.5f, h * 0.45f), end = Offset(w * 0.5f, h * 0.88f), strokeWidth = strokeWidth, cap = StrokeCap.Round)
+                drawLine(color = tint, start = Offset(w * 0.68f, h * 0.45f), end = Offset(w * 0.68f, h * 0.82f), strokeWidth = strokeWidth, cap = StrokeCap.Round)
+                drawLine(color = tint, start = Offset(w * 0.8f, h * 0.4f), end = Offset(w * 0.8f, h * 0.75f), strokeWidth = strokeWidth, cap = StrokeCap.Round)
+            }
+            "calendar", "date" -> {
+                drawRoundRect(
+                    color = tint,
+                    topLeft = Offset(w * 0.15f, h * 0.2f),
+                    size = Size(w * 0.7f, h * 0.68f),
+                    cornerRadius = CornerRadius(w * 0.08f),
+                    style = Stroke(width = strokeWidth)
+                )
+                drawLine(color = tint, start = Offset(w * 0.15f, h * 0.4f), end = Offset(w * 0.85f, h * 0.4f), strokeWidth = strokeWidth)
+                drawLine(color = tint, start = Offset(w * 0.32f, h * 0.12f), end = Offset(w * 0.32f, h * 0.25f), strokeWidth = strokeWidth, cap = StrokeCap.Round)
+                drawLine(color = tint, start = Offset(w * 0.68f, h * 0.12f), end = Offset(w * 0.68f, h * 0.25f), strokeWidth = strokeWidth, cap = StrokeCap.Round)
+                drawCircle(color = tint, center = Offset(w * 0.35f, h * 0.55f), radius = w * 0.04f)
+                drawCircle(color = tint, center = Offset(w * 0.65f, h * 0.55f), radius = w * 0.04f)
+                drawCircle(color = tint, center = Offset(w * 0.35f, h * 0.72f), radius = w * 0.04f)
+                drawCircle(color = tint, center = Offset(w * 0.65f, h * 0.72f), radius = w * 0.04f)
+            }
+            "clock", "time" -> {
+                drawCircle(color = tint, center = Offset(w * 0.5f, h * 0.5f), radius = w * 0.4f, style = Stroke(width = strokeWidth))
+                drawLine(color = tint, start = Offset(w * 0.5f, h * 0.5f), end = Offset(w * 0.5f, h * 0.25f), strokeWidth = strokeWidth, cap = StrokeCap.Round)
+                drawLine(color = tint, start = Offset(w * 0.5f, h * 0.5f), end = Offset(w * 0.72f, h * 0.5f), strokeWidth = strokeWidth, cap = StrokeCap.Round)
+            }
+            "palette", "color" -> {
+                drawCircle(color = tint, center = Offset(w * 0.5f, h * 0.5f), radius = w * 0.4f, style = Stroke(width = strokeWidth))
+                drawCircle(color = tint, center = Offset(w * 0.35f, h * 0.35f), radius = w * 0.06f)
+                drawCircle(color = tint, center = Offset(w * 0.65f, h * 0.35f), radius = w * 0.06f)
+                drawCircle(color = tint, center = Offset(w * 0.35f, h * 0.65f), radius = w * 0.06f)
+            }
             "visibility", "eye" -> {
                 // Eye contour path
                 val eyePath = Path().apply {
@@ -525,6 +782,62 @@ fun AureumVectorIcon(
                 drawPath(path = eyePath, color = tint, style = Stroke(width = strokeWidth))
                 // Central pupil
                 drawCircle(color = tint, center = Offset(w * 0.5f, h * 0.5f), radius = w * 0.16f)
+            }
+            "receipt_long", "ledger", "statement" -> {
+                // Receipt sheet with zigzag or clean edges
+                drawRoundRect(
+                    color = tint,
+                    topLeft = Offset(w * 0.2f, h * 0.15f),
+                    size = Size(w * 0.6f, h * 0.7f),
+                    cornerRadius = CornerRadius(w * 0.06f),
+                    style = Stroke(width = strokeWidth)
+                )
+                // Receipt lines
+                drawLine(color = tint, start = Offset(w * 0.32f, h * 0.32f), end = Offset(w * 0.68f, h * 0.32f), strokeWidth = strokeWidth, cap = StrokeCap.Round)
+                drawLine(color = tint, start = Offset(w * 0.32f, h * 0.48f), end = Offset(w * 0.68f, h * 0.48f), strokeWidth = strokeWidth, cap = StrokeCap.Round)
+                drawLine(color = tint, start = Offset(w * 0.32f, h * 0.64f), end = Offset(w * 0.52f, h * 0.64f), strokeWidth = strokeWidth, cap = StrokeCap.Round)
+            }
+            "drag_handle", "reorder", "drag_indicator" -> {
+                // 3 horizontal bars for reorder handle
+                drawLine(color = tint, start = Offset(w * 0.2f, h * 0.32f), end = Offset(w * 0.8f, h * 0.32f), strokeWidth = strokeWidth, cap = StrokeCap.Round)
+                drawLine(color = tint, start = Offset(w * 0.2f, h * 0.5f), end = Offset(w * 0.8f, h * 0.5f), strokeWidth = strokeWidth, cap = StrokeCap.Round)
+                drawLine(color = tint, start = Offset(w * 0.2f, h * 0.68f), end = Offset(w * 0.8f, h * 0.68f), strokeWidth = strokeWidth, cap = StrokeCap.Round)
+            }
+            "file_upload", "export", "backup" -> {
+                // Up arrow out of a tray
+                drawRoundRect(
+                    color = tint,
+                    topLeft = Offset(w * 0.2f, h * 0.55f),
+                    size = Size(w * 0.6f, h * 0.3f),
+                    cornerRadius = CornerRadius(w * 0.05f),
+                    style = Stroke(width = strokeWidth)
+                )
+                drawLine(color = tint, start = Offset(w * 0.5f, h * 0.65f), end = Offset(w * 0.5f, h * 0.2f), strokeWidth = strokeWidth, cap = StrokeCap.Round)
+                drawLine(color = tint, start = Offset(w * 0.35f, h * 0.35f), end = Offset(w * 0.5f, h * 0.2f), strokeWidth = strokeWidth, cap = StrokeCap.Round)
+                drawLine(color = tint, start = Offset(w * 0.65f, h * 0.35f), end = Offset(w * 0.5f, h * 0.2f), strokeWidth = strokeWidth, cap = StrokeCap.Round)
+            }
+            "file_download", "import", "restore" -> {
+                // Down arrow into a tray
+                drawRoundRect(
+                    color = tint,
+                    topLeft = Offset(w * 0.2f, h * 0.55f),
+                    size = Size(w * 0.6f, h * 0.3f),
+                    cornerRadius = CornerRadius(w * 0.05f),
+                    style = Stroke(width = strokeWidth)
+                )
+                drawLine(color = tint, start = Offset(w * 0.5f, h * 0.2f), end = Offset(w * 0.5f, h * 0.62f), strokeWidth = strokeWidth, cap = StrokeCap.Round)
+                drawLine(color = tint, start = Offset(w * 0.35f, h * 0.47f), end = Offset(w * 0.5f, h * 0.62f), strokeWidth = strokeWidth, cap = StrokeCap.Round)
+                drawLine(color = tint, start = Offset(w * 0.65f, h * 0.47f), end = Offset(w * 0.5f, h * 0.62f), strokeWidth = strokeWidth, cap = StrokeCap.Round)
+            }
+            "arrow_up" -> {
+                drawLine(color = tint, start = Offset(w * 0.5f, h * 0.75f), end = Offset(w * 0.5f, h * 0.25f), strokeWidth = strokeWidth, cap = StrokeCap.Round)
+                drawLine(color = tint, start = Offset(w * 0.3f, h * 0.45f), end = Offset(w * 0.5f, h * 0.25f), strokeWidth = strokeWidth, cap = StrokeCap.Round)
+                drawLine(color = tint, start = Offset(w * 0.7f, h * 0.45f), end = Offset(w * 0.5f, h * 0.25f), strokeWidth = strokeWidth, cap = StrokeCap.Round)
+            }
+            "arrow_down" -> {
+                drawLine(color = tint, start = Offset(w * 0.5f, h * 0.25f), end = Offset(w * 0.5f, h * 0.75f), strokeWidth = strokeWidth, cap = StrokeCap.Round)
+                drawLine(color = tint, start = Offset(w * 0.3f, h * 0.55f), end = Offset(w * 0.5f, h * 0.75f), strokeWidth = strokeWidth, cap = StrokeCap.Round)
+                drawLine(color = tint, start = Offset(w * 0.7f, h * 0.55f), end = Offset(w * 0.5f, h * 0.75f), strokeWidth = strokeWidth, cap = StrokeCap.Round)
             }
             "visibility_off", "eye_off" -> {
                 // Eye contour path

@@ -48,35 +48,36 @@ object AureumThemeStyles {
 }
 
 // Global Core Palette constants to avoid reliance on composable context
-val AureumMidnightPrimaryDark = Color(0xFFC1C5DC)
-val AureumMidnightPrimaryLight = Color(0xFF005AC1)
+val AureumMidnightPrimaryDark = NeonLime
+val AureumMidnightPrimaryLight = CardBlack
 
-val AureumMidnightSecondaryDark = Color(0xFFBDC5E7)
-val AureumMidnightSecondaryLight = Color(0xFF74777F)
+val AureumMidnightSecondaryDark = TextSecondary
+val AureumMidnightSecondaryLight = TextMuted
 
-val AureumMidnightTertiaryDark = Color(0xFFBBC4F2)
-val AureumMidnightTertiaryLight = Color(0xFF4C662B)
+val AureumMidnightTertiaryDark = NeonLimeLight
+val AureumMidnightTertiaryLight = NeonLime
 
 val AureumStyleSpecs.contentPrimary: Color
-    get() = if (isDark) Color.White else Color(0xFF0F1524)
+    get() = if (isDark) Color.White else TextCharcoal
 
 val AureumStyleSpecs.contentSecondary: Color
-    get() = if (isDark) Color(0xFFC7C6CD) else Color(0xFF535864)
+    get() = if (isDark) Color(0xFF9CA3AF) else TextMuted
 
 val AureumStyleSpecs.inactiveContainer: Color
-    get() = if (isDark) Color.White.copy(alpha = 0.05f) else Color.Black.copy(alpha = 0.05f)
+    get() = if (isDark) Color(0xFF161920) else Color(0xFFFFFFFF)
 
 val AureumStyleSpecs.inactiveContainerBorder: Color
-    get() = if (isDark) Color.White.copy(alpha = 0.08f) else Color.Black.copy(alpha = 0.06f)
+    get() = if (isDark) Color.White.copy(alpha = 0.08f) else Color(0xFFEFF1F5)
 
 val AureumStyleSpecs.headingColor: Color
-    get() = if (isDark) AureumMidnightPrimaryDark else AureumMidnightPrimaryLight
+    get() = if (isDark) Color.White else TextCharcoal
 
 val AureumStyleSpecs.activeContainer: Color
-    get() = if (isDark) AureumMidnightPrimaryDark else AureumMidnightPrimaryLight
+    get() = if (isDark) NeonLime else CardBlack
 
 val AureumStyleSpecs.onActiveContainer: Color
-    get() = if (isDark) Color.Black else Color.White
+    get() = if (isDark) CardBlack else Color.White
+
 
 
 /**
@@ -181,94 +182,50 @@ fun Modifier.aureumBackground(): Modifier {
     
     if (specs.isDark) {
         return this.drawBehind {
-            // Elegant Cosmic dark obsidian base
-            drawRect(color = Color(0xFF0F131E))
+            // Sleek modern dark obsidian base
+            drawRect(color = Color(0xFF0F1115))
             
-            // Ultra-subtle deep sapphire blue left accent spot
+            // Ultra-subtle neon lime ambient glow top-right
             drawCircle(
                 brush = Brush.radialGradient(
-                    colors = listOf(Color(0xFF14244B), Color.Transparent),
-                    center = Offset(size.width * 0.1f, size.height * 0.4f),
-                    radius = size.width * 1.5f
-                ),
-                radius = size.width * 1.5f,
-                center = Offset(size.width * 0.1f, size.height * 0.4f)
-            )
-
-            // Dynamic pulsing or glow spots for depth
-            drawCircle(
-                brush = Brush.radialGradient(
-                    colors = listOf(Color(0xFF381F3E), Color.Transparent),
-                    center = Offset(size.width * 0.8f, size.height * 0.15f),
+                    colors = listOf(NeonLime.copy(alpha = 0.05f), Color.Transparent),
+                    center = Offset(size.width * 0.85f, size.height * 0.15f),
                     radius = size.width * 1.2f
                 ),
                 radius = size.width * 1.2f,
-                center = Offset(size.width * 0.8f, size.height * 0.15f)
+                center = Offset(size.width * 0.85f, size.height * 0.15f)
             )
 
-            // Warm bottom copper/coal center ambient warmth
+            // Deep sapphire soft warmth
             drawCircle(
                 brush = Brush.radialGradient(
-                    colors = listOf(Color(0xFF2C2218), Color.Transparent),
-                    center = Offset(size.width * 0.5f, size.height * 0.9f),
+                    colors = listOf(Color(0xFF1B2234).copy(alpha = 0.4f), Color.Transparent),
+                    center = Offset(size.width * 0.1f, size.height * 0.6f),
                     radius = size.width * 1.3f
                 ),
                 radius = size.width * 1.3f,
-                center = Offset(size.width * 0.5f, size.height * 0.9f)
+                center = Offset(size.width * 0.1f, size.height * 0.6f)
             )
         }
     } else {
         return this.drawBehind {
-            // Premium professional light theme steel background (replaces generic white / off-white)
-            // Soft slate-silver-blue that allows white glass to shine
-            drawRect(color = Color(0xFFE2E7F3))
+            // Clean modern light canvas matching reference design
+            drawRect(color = Color(0xFFF8F9FA))
             
-            // Top Right: Radiant Lavender/Iris soft flow
+            // Subtle ambient soft lime glow top
             drawCircle(
                 brush = Brush.radialGradient(
-                    colors = listOf(Color(0xFFD6C8F6).copy(alpha = 0.7f), Color.Transparent),
-                    center = Offset(size.width * 0.95f, size.height * 0.12f),
-                    radius = size.width * 1.2f
+                    colors = listOf(NeonLime.copy(alpha = 0.06f), Color.Transparent),
+                    center = Offset(size.width * 0.5f, size.height * 0.15f),
+                    radius = size.width * 1.0f
                 ),
-                radius = size.width * 1.2f,
-                center = Offset(size.width * 0.95f, size.height * 0.12f)
-            )
-
-            // Top Left: Glowing Aquamarine / Air Mint
-            drawCircle(
-                brush = Brush.radialGradient(
-                    colors = listOf(Color(0xFFBBE5F1).copy(alpha = 0.75f), Color.Transparent),
-                    center = Offset(size.width * 0.05f, size.height * 0.25f),
-                    radius = size.width * 1.1f
-                ),
-                radius = size.width * 1.1f,
-                center = Offset(size.width * 0.05f, size.height * 0.25f)
-            )
-
-            // Bottom Right: Warm Amber/Sunrise Peach
-            drawCircle(
-                brush = Brush.radialGradient(
-                    colors = listOf(Color(0xFFFBDDC5).copy(alpha = 0.65f), Color.Transparent),
-                    center = Offset(size.width * 0.85f, size.height * 0.85f),
-                    radius = size.width * 1.3f
-                ),
-                radius = size.width * 1.3f,
-                center = Offset(size.width * 0.85f, size.height * 0.85f)
-            )
-
-            // Central: Deep Royal Cobalt Glow (Professional base warmth)
-            drawCircle(
-                brush = Brush.radialGradient(
-                    colors = listOf(Color(0xFFCAD8FF).copy(alpha = 0.6f), Color.Transparent),
-                    center = Offset(size.width * 0.5f, size.height * 0.55f),
-                    radius = size.width * 1.4f
-                ),
-                radius = size.width * 1.4f,
-                center = Offset(size.width * 0.5f, size.height * 0.55f)
+                radius = size.width * 1.0f,
+                center = Offset(size.width * 0.5f, size.height * 0.15f)
             )
         }
     }
 }
+
 
 /**
  * Custom Jetpack Compose modifier that implements a Framer Motion-like interactive scale and hover glow effect

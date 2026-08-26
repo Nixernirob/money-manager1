@@ -11,18 +11,18 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 
 private val PremiumDarkColorScheme = darkColorScheme(
-    primary = MidnightPrimary,
-    secondary = MidnightSecondary,
-    tertiary = MidnightTertiary,
-    background = BaseMidnightOffset,
-    surface = BaseMidnightOffset,
-    onPrimary = Color(0xFF161B2B),
-    onSecondary = Color(0xFF272F4A),
-    onTertiary = Color(0xFF1E284C),
+    primary = NeonLime,
+    secondary = TextSecondary,
+    tertiary = NeonLimeLight,
+    background = CanvasBgDark,
+    surface = SurfaceContainer,
+    onPrimary = CardBlack,
+    onSecondary = Color.White,
+    onTertiary = CardBlack,
     onBackground = TextPrimary,
     onSurface = TextPrimary,
     onSurfaceVariant = TextSecondary,
-    outline = OutlineM3,
+    outline = Color(0x26FFFFFF),
     error = ExpenseCoral,
     surfaceContainerLowest = SurfaceLowest,
     surfaceContainerLow = SurfaceContainerLow,
@@ -32,24 +32,24 @@ private val PremiumDarkColorScheme = darkColorScheme(
 )
 
 private val PremiumLightColorScheme = lightColorScheme(
-    primary = Color(0xFF005AC1),
-    secondary = Color(0xFF74777F),
-    tertiary = Color(0xFFD1E1FF),
-    background = Color(0xFFF8F9FF),
+    primary = CardBlack,
+    secondary = TextMuted,
+    tertiary = NeonLime,
+    background = CanvasBgLight,
     surface = Color.White,
     onPrimary = Color.White,
     onSecondary = Color.White,
-    onTertiary = Color(0xFF001D36),
-    onBackground = Color(0xFF1A1C1E),
-    onSurface = Color(0xFF1A1C1E),
-    onSurfaceVariant = Color(0xFF44474E),
-    outline = Color(0xFFE0E2EC),
-    error = Color(0xFFBA1A1A),
+    onTertiary = CardBlack,
+    onBackground = TextCharcoal,
+    onSurface = TextCharcoal,
+    onSurfaceVariant = TextMuted,
+    outline = Color(0xFFEFF1F5),
+    error = ExpenseCoral,
     surfaceContainerLowest = Color.White,
-    surfaceContainerLow = Color(0xFFF3F3F6),
-    surfaceContainer = Color(0xFFEEEEF2),
-    surfaceContainerHigh = Color(0xFFE8E8EC),
-    surfaceContainerHighest = Color(0xFFE2E2E6)
+    surfaceContainerLow = Color(0xFFF9FAFB),
+    surfaceContainer = Color(0xFFFFFFFF),
+    surfaceContainerHigh = Color(0xFFF3F4F6),
+    surfaceContainerHighest = Color(0xFFE5E7EB)
 )
 
 @Composable
@@ -65,25 +65,25 @@ fun AureumTheme(
             glassBackground = GlassSurfaceFill,
             glassBorderColor = GlassBorderTop,
             glassBorderBrush = Brush.verticalGradient(
-                listOf(Color.White.copy(alpha = 0.15f), MidnightSecondary.copy(alpha = 0.30f))
+                listOf(Color.White.copy(alpha = 0.15f), Color.White.copy(alpha = 0.05f))
             ),
-            neonGlowColor = MidnightTertiary,
-            secondaryNeonGlow = MidnightPrimary,
+            neonGlowColor = NeonLime,
+            secondaryNeonGlow = NeonLimeDark,
             frostedBlurRadius = 16.dp,
             subtleShadowColor = Color.Black.copy(alpha = 0.4f)
         )
     } else {
         AureumStyleSpecs(
             isDark = false,
-            glassBackground = Color(0xE6FFFFFF),
-            glassBorderColor = Color(0xFFE0E2EC).copy(alpha = 0.6f),
+            glassBackground = Color.White,
+            glassBorderColor = Color(0xFFEFF1F5),
             glassBorderBrush = Brush.verticalGradient(
-                listOf(Color.White.copy(alpha = 0.8f), Color(0xFFE0E2EC).copy(alpha = 0.5f))
+                listOf(Color(0xFFEFF1F5), Color(0xFFE5E7EB))
             ),
-            neonGlowColor = Color(0xFF005AC1),
-            secondaryNeonGlow = Color(0xFFD1E1FF),
-            frostedBlurRadius = 12.dp,
-            subtleShadowColor = Color(0xFFE0E2EC).copy(alpha = 0.25f)
+            neonGlowColor = NeonLime,
+            secondaryNeonGlow = NeonLimeLight,
+            frostedBlurRadius = 8.dp,
+            subtleShadowColor = Color.Black.copy(alpha = 0.04f)
         )
     }
 
@@ -95,3 +95,4 @@ fun AureumTheme(
         )
     }
 }
+

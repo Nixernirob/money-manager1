@@ -82,5 +82,6 @@ data class Category(
     val icon: String, // identifier for vector icon, e.g., "wallet", "gift", "utensils"
     val type: String, // "INCOME" or "EXPENSE"
     val isEditable: Boolean = true,
-    val isDefault: Boolean = false
+    val isDefault: Boolean = false,
+    val displayOrder: Int = 0
 )

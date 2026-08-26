@@ -64,6 +64,28 @@ class AureumRepository(
         categoryDao.clearCategories()
     }
 
+    suspend fun updateCategoryOrders(orderedCategories: List<Category>) {
+        orderedCategories.forEachIndexed { index, cat ->
+            categoryDao.updateCategory(cat.copy(displayOrder = index))
+        }
+    }
+
+    suspend fun clearAccounts() {
+        accountDao.clearAccounts()
+    }
+
+    suspend fun clearLoans() {
+        loanDao.clearLoans()
+    }
+
+    suspend fun clearSoftLoanProfiles() {
+        softLoanProfileDao.clearProfiles()
+    }
+
+    suspend fun clearFormalLenders() {
+        formalLenderDao.clearLenders()
+    }
+
     suspend fun insertAccount(account: Account) {
         accountDao.insertAccount(account)
     }

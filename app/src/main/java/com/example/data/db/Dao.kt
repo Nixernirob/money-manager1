@@ -73,7 +73,7 @@ interface LoanDao {
 
 @Dao
 interface CategoryDao {
-    @Query("SELECT * FROM categories ORDER BY id ASC")
+    @Query("SELECT * FROM categories ORDER BY displayOrder ASC, id ASC")
     fun getAllCategoriesFlow(): Flow<List<Category>>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)

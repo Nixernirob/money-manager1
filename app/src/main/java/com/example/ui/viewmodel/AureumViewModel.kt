@@ -1,12 +1,23 @@
 package com.example.ui.viewmodel
 
 import android.app.Application
+import android.content.Context
+import android.net.Uri
+import android.util.Base64
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.db.*
 import com.example.data.repository.AureumRepository
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.File
+import java.io.FileOutputStream
+import java.io.InputStreamReader
+import java.io.OutputStreamWriter
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -28,8 +39,9 @@ class AureumViewModel(application: Application) : AndroidViewModel(application) 
     val activeTab = MutableStateFlow("HOME") // HOME, TRANSACTIONS, STATS, ACCOUNTS, MORE
 
     // Security & Lock settings
-    val isLocked = MutableStateFlow(false) // Whether App is CURRENTLY locked
     val isPinGuardEnabled = MutableStateFlow(prefs.getBoolean("pin_guard_enabled", false)) // Whether PIN guard is active
+    val isBiometricEnabled = MutableStateFlow(prefs.getBoolean("biometric_enabled", false)) // Whether Biometric/Fingerprint guard is active
+    val isLocked = MutableStateFlow(false) // Whether App is CURRENTLY locked
     val pinPromptMode = MutableStateFlow(false) // Pin entering mode
     val pinInput = MutableStateFlow("")
     val correctPin = MutableStateFlow(prefs.getString("correct_pin", "1234") ?: "1234") // Custom PIN saved
@@ -42,8 +54,11 @@ class AureumViewModel(application: Application) : AndroidViewModel(application) 
     val isDarkTheme = MutableStateFlow(false) // Professional Polish light theme by default
 
     // Transaction List Filters (Daily / Calendar heat map / Monthly breakdown etc)
-    val transactionFilterType = MutableStateFlow("ALL") // "ALL", "DAILY", "MONTHLY", "CALENDAR"
+    val transactionFilterType = MutableStateFlow("ALL") // "ALL", "EXPENSES", "INCOMES"
     val transactionCategoryFilter = MutableStateFlow("ALL") // Category names
+    val transactionTimeFilter = MutableStateFlow("ALL") // "ALL", "TODAY", "7_DAYS", "15_DAYS", "30_DAYS", "THIS_MONTH", "CUSTOM_MONTH"
+    val transactionCustomMonth = MutableStateFlow(java.util.Calendar.getInstance().get(java.util.Calendar.MONTH)) // 0-11
+    val transactionCustomYear = MutableStateFlow(java.util.Calendar.getInstance().get(java.util.Calendar.YEAR))
 
     // Calculator state
     val calcExpression = MutableStateFlow("")
@@ -56,7 +71,7 @@ class AureumViewModel(application: Application) : AndroidViewModel(application) 
     val editingTransaction = MutableStateFlow<com.example.data.db.Transaction?>(null)
 
     init {
-        if (isPinGuardEnabled.value) {
+        if (isPinGuardEnabled.value || isBiometricEnabled.value) {
             isLocked.value = true
         }
 
@@ -317,7 +332,8 @@ class AureumViewModel(application: Application) : AndroidViewModel(application) 
 
     fun addCategory(name: String, icon: String, type: String) {
         viewModelScope.launch {
-            repository.insertCategory(Category(name = name, icon = icon, type = type, isEditable = true, isDefault = false))
+            val count = allCategories.value.filter { it.type == type }.size
+            repository.insertCategory(Category(name = name, icon = icon, type = type, isEditable = true, isDefault = false, displayOrder = count))
         }
     }
 
@@ -333,27 +349,55 @@ class AureumViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun moveCategoryUp(category: Category) {
+        viewModelScope.launch {
+            val list = allCategories.value.filter { it.type == category.type }.sortedBy { it.displayOrder }
+            val index = list.indexOfFirst { it.id == category.id }
+            if (index > 0) {
+                val prev = list[index - 1]
+                val prevOrder = prev.displayOrder
+                val currentOrder = category.displayOrder
+                repository.updateCategory(category.copy(displayOrder = prevOrder))
+                repository.updateCategory(prev.copy(displayOrder = if (prevOrder == currentOrder) currentOrder + 1 else currentOrder))
+            }
+        }
+    }
+
+    fun moveCategoryDown(category: Category) {
+        viewModelScope.launch {
+            val list = allCategories.value.filter { it.type == category.type }.sortedBy { it.displayOrder }
+            val index = list.indexOfFirst { it.id == category.id }
+            if (index >= 0 && index < list.size - 1) {
+                val next = list[index + 1]
+                val nextOrder = next.displayOrder
+                val currentOrder = category.displayOrder
+                repository.updateCategory(category.copy(displayOrder = nextOrder))
+                repository.updateCategory(next.copy(displayOrder = if (nextOrder == currentOrder) currentOrder - 1 else currentOrder))
+            }
+        }
+    }
+
     suspend fun seedDefaultCategories() {
         val incomeDefaults = listOf(
-            Category(name = "Salary", icon = "wallet", type = "INCOME", isEditable = true, isDefault = true),
-            Category(name = "Allowance", icon = "hand_coins", type = "INCOME", isEditable = true, isDefault = true),
-            Category(name = "Business Profit", icon = "trending_up", type = "INCOME", isEditable = true, isDefault = true),
-            Category(name = "Bonus", icon = "gift", type = "INCOME", isEditable = true, isDefault = true),
-            Category(name = "Other", icon = "circle", type = "INCOME", isEditable = false, isDefault = true)
+            Category(name = "Salary", icon = "wallet", type = "INCOME", isEditable = true, isDefault = true, displayOrder = 0),
+            Category(name = "Allowance", icon = "hand_coins", type = "INCOME", isEditable = true, isDefault = true, displayOrder = 1),
+            Category(name = "Business Profit", icon = "trending_up", type = "INCOME", isEditable = true, isDefault = true, displayOrder = 2),
+            Category(name = "Bonus", icon = "gift", type = "INCOME", isEditable = true, isDefault = true, displayOrder = 3),
+            Category(name = "Other", icon = "circle", type = "INCOME", isEditable = false, isDefault = true, displayOrder = 4)
         )
         val expenseDefaults = listOf(
-            Category(name = "Food", icon = "utensils", type = "EXPENSE", isEditable = true, isDefault = true),
-            Category(name = "Apparel", icon = "shirt", type = "EXPENSE", isEditable = true, isDefault = true),
-            Category(name = "House", icon = "home", type = "EXPENSE", isEditable = true, isDefault = true),
-            Category(name = "Rent", icon = "building", type = "EXPENSE", isEditable = true, isDefault = true),
-            Category(name = "Internet Bill", icon = "wifi", type = "EXPENSE", isEditable = true, isDefault = true),
-            Category(name = "Transport", icon = "bus", type = "EXPENSE", isEditable = true, isDefault = true),
-            Category(name = "Health", icon = "heart_pulse", type = "EXPENSE", isEditable = true, isDefault = true),
-            Category(name = "Beauty", icon = "sparkles", type = "EXPENSE", isEditable = true, isDefault = true),
-            Category(name = "Education", icon = "graduation_cap", type = "EXPENSE", isEditable = true, isDefault = true),
-            Category(name = "Gift", icon = "gift", type = "EXPENSE", isEditable = true, isDefault = true),
-            Category(name = "Entertainment", icon = "gamepad", type = "EXPENSE", isEditable = true, isDefault = true),
-            Category(name = "Other", icon = "circle", type = "EXPENSE", isEditable = false, isDefault = true)
+            Category(name = "Food", icon = "utensils", type = "EXPENSE", isEditable = true, isDefault = true, displayOrder = 0),
+            Category(name = "Apparel", icon = "shirt", type = "EXPENSE", isEditable = true, isDefault = true, displayOrder = 1),
+            Category(name = "House", icon = "home", type = "EXPENSE", isEditable = true, isDefault = true, displayOrder = 2),
+            Category(name = "Rent", icon = "building", type = "EXPENSE", isEditable = true, isDefault = true, displayOrder = 3),
+            Category(name = "Internet Bill", icon = "wifi", type = "EXPENSE", isEditable = true, isDefault = true, displayOrder = 4),
+            Category(name = "Transport", icon = "bus", type = "EXPENSE", isEditable = true, isDefault = true, displayOrder = 5),
+            Category(name = "Health", icon = "heart_pulse", type = "EXPENSE", isEditable = true, isDefault = true, displayOrder = 6),
+            Category(name = "Beauty", icon = "sparkles", type = "EXPENSE", isEditable = true, isDefault = true, displayOrder = 7),
+            Category(name = "Education", icon = "graduation_cap", type = "EXPENSE", isEditable = true, isDefault = true, displayOrder = 8),
+            Category(name = "Gift", icon = "gift", type = "EXPENSE", isEditable = true, isDefault = true, displayOrder = 9),
+            Category(name = "Entertainment", icon = "gamepad", type = "EXPENSE", isEditable = true, isDefault = true, displayOrder = 10),
+            Category(name = "Other", icon = "circle", type = "EXPENSE", isEditable = false, isDefault = true, displayOrder = 11)
         )
         for (c in incomeDefaults) repository.insertCategory(c)
         for (c in expenseDefaults) repository.insertCategory(c)
@@ -591,6 +635,12 @@ class AureumViewModel(application: Application) : AndroidViewModel(application) 
         isLocked.value = true
     }
 
+    fun unlockApp() {
+        isLocked.value = false
+        pinPromptMode.value = false
+        pinInput.value = ""
+    }
+
     fun saveNewPin(newPin: String) {
         if (newPin.length == 4) {
             prefs.edit().putString("correct_pin", newPin).apply()
@@ -604,6 +654,11 @@ class AureumViewModel(application: Application) : AndroidViewModel(application) 
         if (enabled && (correctPin.value.isBlank() || correctPin.value == "1234")) {
             saveNewPin("1234")
         }
+    }
+
+    fun setBiometricEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean("biometric_enabled", enabled).apply()
+        isBiometricEnabled.value = enabled
     }
 
     // --- Calculator Built-in Logic ---
@@ -693,28 +748,353 @@ class AureumViewModel(application: Application) : AndroidViewModel(application) 
         }.parse()
     }
 
-    // --- Clean Offline CSV Exporter ---
-    fun exportLedgerToCsv() {
-        viewModelScope.launch {
-            try {
-                val formatter = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US)
-                val csvContent = StringBuilder()
-                csvContent.append("ID,Date,Type,Amount,Category,Note\n")
-                
-                allTransactions.value.forEach { t ->
-                    val dateStr = formatter.format(Date(t.timestamp))
-                    val amountStr = String.format(Locale.US, "%.2f", t.amount)
-                    val noteEscaped = t.note.replace("\"", "\"\"")
-                    csvContent.append("${t.id},$dateStr,${t.type},$amountStr,${t.category},\"$noteEscaped\"\n")
+    // --- Full Modular JSON Backup Engine ---
+    suspend fun generateBackupJsonString(
+        includeTransactions: Boolean,
+        includeImages: Boolean,
+        includeAccounts: Boolean,
+        includeCategories: Boolean,
+        includeLoans: Boolean
+    ): String = withContext(Dispatchers.IO) {
+        val root = JSONObject()
+        root.put("version", 1)
+        root.put("exportedAt", System.currentTimeMillis())
+        root.put("currency", selectedCurrency.value)
+        root.put("isDarkTheme", isDarkTheme.value)
+
+        if (includeCategories) {
+            val catArray = JSONArray()
+            allCategories.value.forEach { cat ->
+                val obj = JSONObject().apply {
+                    put("name", cat.name)
+                    put("icon", cat.icon)
+                    put("type", cat.type)
+                    put("isEditable", cat.isEditable)
+                    put("isDefault", cat.isDefault)
+                    put("displayOrder", cat.displayOrder)
                 }
-                
-                // Show successful offline copy code/file trigger status
-                val fileName = "aureum_ledger_${System.currentTimeMillis() / 1000}.csv"
-                exportMessage.value = "System exported: $fileName loaded offline. Copy contents:\n\n${csvContent.take(150)}..."
-            } catch (e: Exception) {
-                exportMessage.value = "Export failed: ${e.message}"
+                catArray.put(obj)
             }
+            root.put("categories", catArray)
         }
+
+        if (includeAccounts) {
+            val accArray = JSONArray()
+            allAccounts.value.forEach { acc ->
+                val obj = JSONObject().apply {
+                    put("id", acc.id)
+                    put("name", acc.name)
+                    put("balance", acc.balance)
+                    put("type", acc.type)
+                    if (acc.creditLimit != null) put("creditLimit", acc.creditLimit)
+                    put("iconName", acc.iconName)
+                    put("tintHex", acc.tintHex)
+                }
+                accArray.put(obj)
+            }
+            root.put("accounts", accArray)
+        }
+
+        if (includeLoans) {
+            val loanArray = JSONArray()
+            allLoans.value.forEach { loan ->
+                val obj = JSONObject().apply {
+                    put("id", loan.id)
+                    put("type", loan.type)
+                    put("borrowerOrLender", loan.borrowerOrLender)
+                    put("loanAmount", loan.loanAmount)
+                    put("interestRate", loan.interestRate)
+                    put("outstandingAmount", loan.outstandingAmount)
+                    put("nextDueDate", loan.nextDueDate)
+                    put("emiAmount", loan.emiAmount)
+                    put("direction", loan.direction)
+                    put("isCompleted", loan.isCompleted)
+                    put("startDate", loan.startDate)
+                    put("dueDateString", loan.dueDateString)
+                    put("notes", loan.notes)
+                    put("status", loan.status)
+                    put("paymentsJson", loan.paymentsJson)
+                    if (loan.formalLenderId != null) put("formalLenderId", loan.formalLenderId)
+                }
+                loanArray.put(obj)
+            }
+            root.put("loans", loanArray)
+
+            val profileArray = JSONArray()
+            allSoftLoanProfiles.value.forEach { p ->
+                val obj = JSONObject().apply {
+                    put("id", p.id)
+                    put("name", p.name)
+                    if (p.profilePic != null) put("profilePic", p.profilePic)
+                    if (p.phoneNumber != null) put("phoneNumber", p.phoneNumber)
+                    put("notes", p.notes)
+                    put("createdAt", p.createdAt)
+                }
+                profileArray.put(obj)
+            }
+            root.put("softLoanProfiles", profileArray)
+
+            val lenderArray = JSONArray()
+            allFormalLenders.value.forEach { l ->
+                val obj = JSONObject().apply {
+                    put("id", l.id)
+                    put("name", l.name)
+                    put("notes", l.notes)
+                    put("createdAt", l.createdAt)
+                }
+                lenderArray.put(obj)
+            }
+            root.put("formalLenders", lenderArray)
+        }
+
+        if (includeTransactions) {
+            val txArray = JSONArray()
+            allTransactions.value.forEach { tx ->
+                val obj = JSONObject().apply {
+                    put("id", tx.id)
+                    put("type", tx.type)
+                    put("amount", tx.amount)
+                    put("category", tx.category)
+                    put("accountId", tx.accountId)
+                    if (tx.toAccountId != null) put("toAccountId", tx.toAccountId)
+                    put("note", tx.note)
+                    put("timestamp", tx.timestamp)
+                    put("isRecurring", tx.isRecurring)
+                    put("fee", tx.fee)
+                    if (tx.softLoanProfileId != null) put("softLoanProfileId", tx.softLoanProfileId)
+                    if (tx.softLoanType != null) put("softLoanType", tx.softLoanType)
+                    if (tx.formalLenderId != null) put("formalLenderId", tx.formalLenderId)
+                    put("isLoanActivity", tx.isLoanActivity)
+
+                    if (includeImages && !tx.receiptPath.isNullOrBlank()) {
+                        try {
+                            val file = File(tx.receiptPath)
+                            if (file.exists()) {
+                                val bytes = file.readBytes()
+                                val base64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
+                                put("receiptBase64", base64)
+                                put("receiptFileName", file.name)
+                            }
+                        } catch (_: Exception) {}
+                    }
+                }
+                txArray.put(obj)
+            }
+            root.put("transactions", txArray)
+        }
+
+        root.toString(2)
+    }
+
+    suspend fun importBackupFromJsonString(context: Context, jsonString: String): String = withContext(Dispatchers.IO) {
+        try {
+            val root = JSONObject(jsonString)
+            var restoredAccounts = 0
+            var restoredTransactions = 0
+            var restoredCategories = 0
+            var restoredLoans = 0
+            var restoredProfiles = 0
+
+            if (root.has("currency")) {
+                val curr = root.optString("currency", "৳")
+                selectedCurrency.value = curr
+            }
+
+            // Restore Categories
+            if (root.has("categories")) {
+                val catArray = root.getJSONArray("categories")
+                if (catArray.length() > 0) {
+                    repository.clearAllCategories()
+                    for (i in 0 until catArray.length()) {
+                        val obj = catArray.getJSONObject(i)
+                        val cat = Category(
+                            name = obj.getString("name"),
+                            icon = obj.optString("icon", "circle"),
+                            type = obj.optString("type", "EXPENSE"),
+                            isEditable = obj.optBoolean("isEditable", true),
+                            isDefault = obj.optBoolean("isDefault", false),
+                            displayOrder = obj.optInt("displayOrder", i)
+                        )
+                        repository.insertCategory(cat)
+                        restoredCategories++
+                    }
+                }
+            }
+
+            // Restore Accounts
+            if (root.has("accounts")) {
+                val accArray = root.getJSONArray("accounts")
+                if (accArray.length() > 0) {
+                    repository.clearAccounts()
+                    for (i in 0 until accArray.length()) {
+                        val obj = accArray.getJSONObject(i)
+                        val acc = Account(
+                            id = obj.optInt("id", 0),
+                            name = obj.getString("name"),
+                            balance = obj.getDouble("balance"),
+                            type = obj.optString("type", "CASH"),
+                            creditLimit = if (obj.has("creditLimit")) obj.getDouble("creditLimit") else null,
+                            iconName = obj.optString("iconName", "savings"),
+                            tintHex = obj.optString("tintHex", "#bbc4f2")
+                        )
+                        repository.insertAccount(acc)
+                        restoredAccounts++
+                    }
+                }
+            }
+
+            // Restore Loans
+            if (root.has("loans")) {
+                val loanArray = root.getJSONArray("loans")
+                repository.clearLoans()
+                for (i in 0 until loanArray.length()) {
+                    val obj = loanArray.getJSONObject(i)
+                    val loan = Loan(
+                        id = obj.optInt("id", 0),
+                        type = obj.optString("type", "FORMAL"),
+                        borrowerOrLender = obj.optString("borrowerOrLender", "Facility"),
+                        loanAmount = obj.optDouble("loanAmount", 0.0),
+                        interestRate = obj.optDouble("interestRate", 0.0),
+                        outstandingAmount = obj.optDouble("outstandingAmount", 0.0),
+                        nextDueDate = obj.optLong("nextDueDate", System.currentTimeMillis()),
+                        emiAmount = obj.optDouble("emiAmount", 0.0),
+                        direction = obj.optString("direction", "BORROWED"),
+                        isCompleted = obj.optBoolean("isCompleted", false),
+                        startDate = obj.optString("startDate", ""),
+                        dueDateString = obj.optString("dueDateString", ""),
+                        notes = obj.optString("notes", ""),
+                        status = obj.optString("status", "ACTIVE"),
+                        paymentsJson = obj.optString("paymentsJson", ""),
+                        formalLenderId = if (obj.has("formalLenderId")) obj.getInt("formalLenderId") else null
+                    )
+                    repository.insertLoan(loan)
+                    restoredLoans++
+                }
+            }
+
+            if (root.has("softLoanProfiles")) {
+                val profileArray = root.getJSONArray("softLoanProfiles")
+                repository.clearSoftLoanProfiles()
+                for (i in 0 until profileArray.length()) {
+                    val obj = profileArray.getJSONObject(i)
+                    val p = SoftLoanProfile(
+                        id = obj.optInt("id", 0),
+                        name = obj.getString("name"),
+                        profilePic = if (obj.has("profilePic")) obj.getString("profilePic") else null,
+                        phoneNumber = if (obj.has("phoneNumber")) obj.getString("phoneNumber") else null,
+                        notes = obj.optString("notes", ""),
+                        createdAt = obj.optLong("createdAt", System.currentTimeMillis())
+                    )
+                    repository.insertSoftLoanProfile(p)
+                    restoredProfiles++
+                }
+            }
+
+            if (root.has("formalLenders")) {
+                val lenderArray = root.getJSONArray("formalLenders")
+                repository.clearFormalLenders()
+                for (i in 0 until lenderArray.length()) {
+                    val obj = lenderArray.getJSONObject(i)
+                    val l = FormalLender(
+                        id = obj.optInt("id", 0),
+                        name = obj.getString("name"),
+                        notes = obj.optString("notes", ""),
+                        createdAt = obj.optLong("createdAt", System.currentTimeMillis())
+                    )
+                    repository.insertFormalLender(l)
+                }
+            }
+
+            // Restore Transactions
+            if (root.has("transactions")) {
+                val txArray = root.getJSONArray("transactions")
+                repository.clearTransactions()
+                val receiptsDir = File(context.filesDir, "receipts").apply { mkdirs() }
+
+                for (i in 0 until txArray.length()) {
+                    val obj = txArray.getJSONObject(i)
+                    var savedReceiptPath: String? = null
+
+                    if (obj.has("receiptBase64")) {
+                        try {
+                            val b64 = obj.getString("receiptBase64")
+                            val bytes = Base64.decode(b64, Base64.DEFAULT)
+                            val fileName = obj.optString("receiptFileName", "receipt_${System.currentTimeMillis()}_$i.jpg")
+                            val destFile = File(receiptsDir, fileName)
+                            destFile.writeBytes(bytes)
+                            savedReceiptPath = destFile.absolutePath
+                        } catch (_: Exception) {}
+                    }
+
+                    val trans = Transaction(
+                        id = obj.optInt("id", 0),
+                        type = obj.getString("type"),
+                        amount = obj.getDouble("amount"),
+                        category = obj.getString("category"),
+                        accountId = obj.getInt("accountId"),
+                        toAccountId = if (obj.has("toAccountId")) obj.getInt("toAccountId") else null,
+                        note = obj.optString("note", ""),
+                        timestamp = obj.optLong("timestamp", System.currentTimeMillis()),
+                        receiptPath = savedReceiptPath,
+                        isRecurring = obj.optBoolean("isRecurring", false),
+                        fee = obj.optDouble("fee", 0.0),
+                        softLoanProfileId = if (obj.has("softLoanProfileId")) obj.getInt("softLoanProfileId") else null,
+                        softLoanType = if (obj.has("softLoanType")) obj.getString("softLoanType") else null,
+                        formalLenderId = if (obj.has("formalLenderId")) obj.getInt("formalLenderId") else null,
+                        isLoanActivity = obj.optBoolean("isLoanActivity", false)
+                    )
+                    val database = AppDatabase.getDatabase(context)
+                    database.transactionDao().insertTransaction(trans)
+                    restoredTransactions++
+                }
+            }
+
+            "Backup restored successfully!\n\n• $restoredAccounts Vaults\n• $restoredTransactions Transactions\n• $restoredCategories Categories\n• $restoredLoans Facilities & $restoredProfiles Profiles"
+        } catch (e: Exception) {
+            "Failed to import backup: ${e.localizedMessage ?: "Corrupted file format"}"
+        }
+    }
+
+    // Helper to write JSON string to a Uri (Storage Access Framework)
+    fun writeJsonToUri(context: Context, uri: Uri, content: String): Boolean {
+        return try {
+            context.contentResolver.openOutputStream(uri)?.use { outputStream ->
+                OutputStreamWriter(outputStream).use { writer ->
+                    writer.write(content)
+                    writer.flush()
+                }
+            }
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    // Helper to read string from a Uri (Storage Access Framework)
+    fun readJsonFromUri(context: Context, uri: Uri): String? {
+        return try {
+            context.contentResolver.openInputStream(uri)?.use { inputStream ->
+                InputStreamReader(inputStream).use { reader ->
+                    reader.readText()
+                }
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    fun exportLedgerToCsv() {
+        val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
+        val csv = StringBuilder()
+        csv.append("ID,Type,Amount,Category,Account,ToAccount,Date,Note,Fee,IsLoan\n")
+        allTransactions.value.forEach { tx ->
+            val accName = allAccounts.value.find { it.id == tx.accountId }?.name ?: "Unknown"
+            val toAccName = if (tx.toAccountId != null) allAccounts.value.find { it.id == tx.toAccountId }?.name ?: "" else ""
+            val cleanNote = (tx.note ?: "").replace(",", " ").replace("\n", " ")
+            val formattedDate = sdf.format(Date(tx.timestamp))
+            csv.append("${tx.id},${tx.type},${tx.amount},${tx.category},\"$accName\",\"$toAccName\",$formattedDate,\"$cleanNote\",${tx.fee},${tx.isLoanActivity}\n")
+        }
+        exportMessage.value = csv.toString()
     }
 
     fun clearExportMessage() {

@@ -1,7 +1,12 @@
 package com.example.ui.screens
 
+import android.app.DatePickerDialog
+import android.app.TimePickerDialog
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -53,6 +58,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import android.net.Uri
+import kotlinx.coroutines.launch
 import java.io.File
 import java.io.FileOutputStream
 import coil.compose.AsyncImage
@@ -87,6 +93,22 @@ private val MidnightSecondary: Color
 private val MidnightTertiary: Color
     @Composable get() = if (MaterialTheme.colorScheme.background.luminance() < 0.5f) Color(0xFFBBC4F2) else Color(0xFFD1E1FF)
 
+private data class VaultCardModel(
+    val id: Int,
+    val name: String,
+    val balance: Double,
+    val dueAmount: Double,
+    val tag: String,
+    val iconName: String,
+    val gradient: List<Color>,
+    val textColor: Color,
+    val subTextColor: Color,
+    val buttonBg: Color,
+    val buttonTextColor: Color,
+    val buttonLabel: String,
+    val account: Account?
+)
+
 @Composable
 fun DashboardScreen(
     viewModel: AureumViewModel,
@@ -101,6 +123,7 @@ fun DashboardScreen(
     val softLoanProfiles by viewModel.allSoftLoanProfiles.collectAsState()
 
     var selectedDetailVault by remember { mutableStateOf<Account?>(null) }
+    val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
 
     // Calculate Soft Loan Payable & Receivable across all profiles
     val softLoanTransactions = transactions.filter { it.softLoanProfileId != null }
@@ -131,247 +154,439 @@ fun DashboardScreen(
     val totalNetWorth = accountsNetWorth + totalSoftReceivable - totalSoftPayable + formalLentLoans - formalBorrowedLoans
 
     val specs = AureumThemeStyles.specs
-    val titleTextColor = specs.contentSecondary
-    val balanceTextColor = specs.contentPrimary
-    val iconTintColor = specs.activeContainer
-    val buttonBg = specs.activeContainer
-    val buttonContentColor = specs.onActiveContainer
+    val primaryCardBg = if (isDark) SurfaceContainer else Color.White
+    val cardBorder = if (isDark) Color.White.copy(alpha = 0.08f) else Color(0xFFEFF1F5)
+
+    // Swipeable Vault Accounts Card Models (Right & Left Swipeable)
+    val vaultCardList = remember(accounts, totalNetWorth, totalSoftPayable, formalBorrowedLoans) {
+        if (accounts.isEmpty()) {
+            listOf(
+                VaultCardModel(
+                    id = -1,
+                    name = "Aureum Main Vault",
+                    balance = totalNetWorth,
+                    dueAmount = if (totalSoftPayable > 0) totalSoftPayable else (formalBorrowedLoans.takeIf { it > 0 } ?: 14670.0),
+                    tag = "PRIMARY VAULT",
+                    iconName = "account_balance",
+                    gradient = listOf(NeonLimeLight, NeonLimeDark),
+                    textColor = Color.Black,
+                    subTextColor = Color(0xFF1C3A0A),
+                    buttonBg = CardBlack,
+                    buttonTextColor = Color.White,
+                    buttonLabel = "Pay now",
+                    account = null
+                ),
+                VaultCardModel(
+                    id = -2,
+                    name = "High-Yield Reserve",
+                    balance = 85000.0,
+                    dueAmount = 0.0,
+                    tag = "CASH RESERVE",
+                    iconName = "savings",
+                    gradient = listOf(Color(0xFF1E2430), Color(0xFF11141A)),
+                    textColor = Color.White,
+                    subTextColor = Color(0xFF94A3B8),
+                    buttonBg = NeonLime,
+                    buttonTextColor = CardBlack,
+                    buttonLabel = "Manage",
+                    account = null
+                ),
+                VaultCardModel(
+                    id = -3,
+                    name = "Infinite Metal Card",
+                    balance = 12450.0,
+                    dueAmount = 2450.0,
+                    tag = "CREDIT FACILITY",
+                    iconName = "credit_card",
+                    gradient = listOf(Color(0xFF132D25), Color(0xFF0B1914)),
+                    textColor = Color.White,
+                    subTextColor = Color(0xFF86EFAC),
+                    buttonBg = Color(0xFF10B981),
+                    buttonTextColor = Color.White,
+                    buttonLabel = "Deposit",
+                    account = null
+                )
+            )
+        } else {
+            val cardGradients = listOf(
+                listOf(NeonLimeLight, NeonLimeDark),
+                listOf(Color(0xFF1E2430), Color(0xFF11141A)),
+                listOf(Color(0xFF1A2744), Color(0xFF0F172A)),
+                listOf(Color(0xFF132D25), Color(0xFF0B1914)),
+                listOf(Color(0xFF3B1E34), Color(0xFF1F0D1B))
+            )
+
+            // First card: All Wealth / Total Net Worth Hero Card
+            val list = mutableListOf(
+                VaultCardModel(
+                    id = 0,
+                    name = "Total Net Worth",
+                    balance = totalNetWorth,
+                    dueAmount = if (totalSoftPayable > 0) totalSoftPayable else (formalBorrowedLoans.takeIf { it > 0 } ?: 0.0),
+                    tag = "ALL WEALTH",
+                    iconName = "account_balance",
+                    gradient = listOf(NeonLimeLight, NeonLimeDark),
+                    textColor = Color.Black,
+                    subTextColor = Color(0xFF1C3A0A),
+                    buttonBg = CardBlack,
+                    buttonTextColor = Color.White,
+                    buttonLabel = "Pay now",
+                    account = null
+                )
+            )
+
+            // Add each individual vault account as its own swipeable card
+            accounts.forEachIndexed { idx, acc ->
+                val grad = cardGradients[(idx + 1) % cardGradients.size]
+                val isLime = grad[0] == NeonLimeLight
+                val tagStr = when (acc.type.uppercase()) {
+                    "ACCOUNTS", "BANK" -> "BANK VAULT"
+                    "CASH", "WALLET" -> "CASH VAULT"
+                    "CARD", "CREDIT" -> "CREDIT VAULT"
+                    else -> "ACTIVE VAULT"
+                }
+                list.add(
+                    VaultCardModel(
+                        id = acc.id,
+                        name = acc.name,
+                        balance = acc.balance,
+                        dueAmount = 0.0,
+                        tag = tagStr,
+                        iconName = acc.iconName,
+                        gradient = grad,
+                        textColor = if (isLime) Color.Black else Color.White,
+                        subTextColor = if (isLime) Color(0xFF1C3A0A) else Color(0xFF94A3B8),
+                        buttonBg = if (isLime) CardBlack else NeonLime,
+                        buttonTextColor = if (isLime) Color.White else CardBlack,
+                        buttonLabel = "View",
+                        account = acc
+                    )
+                )
+            }
+            list
+        }
+    }
+
+    val cardPagerState = rememberPagerState(pageCount = { vaultCardList.size })
 
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
             .padding(horizontal = 20.dp),
-        verticalArrangement = Arrangement.spacedBy(28.dp),
-        contentPadding = PaddingValues(top = 16.dp, bottom = 100.dp)
+        verticalArrangement = Arrangement.spacedBy(20.dp),
+        contentPadding = PaddingValues(top = 8.dp, bottom = 100.dp)
     ) {
-        // A. Top Hero Layer (Balance)
+        // 1. Top App Header Bar matching the reference design
         item {
-            GlassCard(
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(200.dp)
-                    .aureumNeonGlow()
+                    .padding(top = 8.dp, bottom = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(
-                    modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.SpaceBetween,
-                    horizontalAlignment = Alignment.CenterHorizontally
+                // Left: User Profile Avatar
+                Box(
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clip(CircleShape)
+                        .background(
+                            Brush.linearGradient(
+                                listOf(Color(0xFFE0E7FF), Color(0xFFC7D2FE))
+                            )
+                        )
+                        .border(1.5.dp, if (isDark) NeonLime.copy(alpha = 0.6f) else Color.White, CircleShape),
+                    contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = "TOTAL NET WORTH",
-                        color = titleTextColor,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 1.5.sp
+                        text = "JD",
+                        color = Color(0xFF3730A3),
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold
                     )
-                    
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center,
+                }
+
+                // Center: Screen Title
+                Text(
+                    text = "Wallet",
+                    color = specs.contentPrimary,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold
+                )
+
+                // Right: Notification Bell & Eye Toggle
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
                         modifier = Modifier
-                            .clickable { viewModel.isBalanceHidden.value = !isBalanceHidden }
-                            .padding(8.dp)
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(primaryCardBg)
+                            .border(1.dp, cardBorder, CircleShape)
+                            .clickable { viewModel.isBalanceHidden.value = !isBalanceHidden },
+                        contentAlignment = Alignment.Center
                     ) {
-                        Text(
-                            text = if (isBalanceHidden) "••••••" else "$currency${String.format(Locale.getDefault(), "%,.2f", totalNetWorth)}",
-                            color = balanceTextColor,
-                            fontSize = 32.sp,
-                            fontWeight = FontWeight.Bold,
-                            fontFamily = FontFamily.Monospace,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Spacer(modifier = Modifier.width(10.dp))
                         AureumVectorIcon(
                             name = if (isBalanceHidden) "visibility_off" else "visibility",
-                            tint = iconTintColor,
-                            modifier = Modifier.size(20.dp)
+                            tint = specs.contentPrimary,
+                            modifier = Modifier.size(18.dp)
                         )
                     }
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(primaryCardBg)
+                            .border(1.dp, cardBorder, CircleShape)
+                            .clickable { /* Notification tap */ },
+                        contentAlignment = Alignment.Center
                     ) {
-                        Button(
-                            onClick = onAddTransactionClick,
-                            modifier = Modifier.weight(1f),
-                            shape = RoundedCornerShape(14.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = buttonBg,
-                                contentColor = buttonContentColor
-                            )
+                        AureumVectorIcon(
+                            name = "bell",
+                            tint = specs.contentPrimary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+            }
+        }
+
+        // 2. Balance Header ("My Balance" & Total Amount)
+        item {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { viewModel.isBalanceHidden.value = !isBalanceHidden }
+                    .padding(vertical = 4.dp)
+            ) {
+                Text(
+                    text = "My Balance",
+                    color = specs.contentSecondary,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = if (isBalanceHidden) "••••••••" else "$currency${String.format(Locale.getDefault(), "%,.2f", totalNetWorth)}",
+                    color = specs.contentPrimary,
+                    fontSize = 32.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = (-0.5).sp
+                )
+            }
+        }
+
+        // 3. Swipeable Vault Accounts Card Carousel (Right & Left Swipeable)
+        item {
+            HorizontalPager(
+                state = cardPagerState,
+                modifier = Modifier.fillMaxWidth(),
+                pageSpacing = 14.dp
+            ) { page ->
+                val card = vaultCardList[page]
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(185.dp)
+                        .clip(RoundedCornerShape(24.dp))
+                        .background(Brush.linearGradient(card.gradient))
+                        .clickable {
+                            if (card.account != null) {
+                                selectedDetailVault = card.account
+                            } else if (card.id == -1 || card.id == 0) {
+                                onAddTransactionClick()
+                            }
+                        }
+                        .padding(20.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.fillMaxSize(),
+                        verticalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        // Top Row: Vault Icon + Vault Name & Vault Tag Badge (No Card Number)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            AureumVectorIcon(name = "add", tint = buttonContentColor, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Transaction", color = buttonContentColor, fontWeight = FontWeight.Bold)
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(32.dp)
+                                        .clip(CircleShape)
+                                        .background(card.textColor.copy(alpha = 0.15f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    AureumVectorIcon(
+                                        name = card.iconName,
+                                        tint = card.textColor,
+                                        modifier = Modifier.size(17.dp)
+                                    )
+                                }
+                                Text(
+                                    text = card.name,
+                                    color = card.textColor.copy(alpha = 0.95f),
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(card.textColor.copy(alpha = 0.15f))
+                                    .padding(horizontal = 9.dp, vertical = 4.dp)
+                            ) {
+                                Text(
+                                    text = card.tag,
+                                    color = card.textColor,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    letterSpacing = 0.6.sp
+                                )
+                            }
+                        }
+
+                        // Bottom Row: Balance / Total Due + Action Pill Button
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.Bottom
+                        ) {
+                            Column {
+                                Text(
+                                    text = if (card.dueAmount > 0) "Total due" else "Vault Balance",
+                                    color = card.subTextColor,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                val displayVal = if (card.dueAmount > 0) card.dueAmount else card.balance
+                                Text(
+                                    text = if (isBalanceHidden) "••••" else "$currency${String.format(Locale.getDefault(), "%,.2f", displayVal)}",
+                                    color = card.textColor,
+                                    fontSize = 20.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+
+                            // Interactive Pill Button
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(50))
+                                    .background(card.buttonBg)
+                                    .clickable {
+                                        if (card.account != null) {
+                                            selectedDetailVault = card.account
+                                        } else {
+                                            onAddTransactionClick()
+                                        }
+                                    }
+                                    .padding(horizontal = 18.dp, vertical = 9.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = card.buttonLabel,
+                                    color = card.buttonTextColor,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
                         }
                     }
                 }
             }
         }
 
-        // B. Account Carousel Section
+        // 4. Dynamic Carousel Dots Indicator (Synced with Active Swipe Page)
         item {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(
-                    text = "ACCOUNTS & CARDS",
-                    color = TextSecondary,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 1.5.sp
-                )
-                
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                    // Prepend Total overview
-                    AccountSwipeCard(
-                        name = "Assets Overview",
-                        balance = totalNetWorth,
-                        type = "OVERVIEW",
-                        tintColor = MidnightPrimary,
-                        numberMask = "ALL WEALTH",
-                        isHidden = isBalanceHidden,
-                        currency = currency
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                repeat(cardPagerState.pageCount) { index ->
+                    val isSelected = cardPagerState.currentPage == index
+                    val dotWidth by animateDpAsState(
+                        targetValue = if (isSelected) 16.dp else 5.dp,
+                        label = "carousel_dot_width"
                     )
+                    val dotColor = if (isSelected) {
+                        if (isDark) NeonLime else CardBlack
+                    } else {
+                        if (isDark) Color.White.copy(alpha = 0.25f) else Color(0xFFD1D5DB)
+                    }
 
-                    accounts.forEach { acc ->
-                        AccountSwipeCard(
-                            name = acc.name,
-                            balance = acc.balance,
-                            type = acc.type,
-                            tintColor = Color(android.graphics.Color.parseColor(acc.tintHex)),
-                            numberMask = "•••• ${acc.id + 4239}",
-                            isHidden = isBalanceHidden,
-                            currency = currency,
-                            onClick = { selectedDetailVault = acc }
-                        )
+                    Box(
+                        modifier = Modifier
+                            .size(width = dotWidth, height = 5.dp)
+                            .clip(RoundedCornerShape(50))
+                            .background(dotColor)
+                    )
+                    if (index < cardPagerState.pageCount - 1) {
+                        Spacer(modifier = Modifier.width(6.dp))
                     }
                 }
             }
         }
 
-        // C. Quick Insights Row
+        // 5. Recent Activity Section (Directly below swipeable cards)
         item {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(
-                    text = "QUICK PORTFOLIO INSIGHTS",
-                    color = TextSecondary,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 1.5.sp
-                )
-
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    val todaySpent = transactions.filter { 
-                        it.type == "EXPENSE" && it.timestamp > System.currentTimeMillis() - 86400000 
-                    }.sumOf { it.amount }
-
-                    val monthlyExpense = transactions.filter {
-                        it.type == "EXPENSE" && it.timestamp > System.currentTimeMillis() - 30L * 24 * 60 * 60 * 1000
-                    }.sumOf { it.amount }
-
-                    InsightChip(
-                        label = "Spent Today",
-                        value = "$currency${todaySpent.toInt()}",
-                        accentColor = ExpenseCoral,
-                        modifier = Modifier.weight(1f)
-                    )
-                    InsightChip(
-                        label = "Monthly Spent",
-                        value = "$currency${monthlyExpense.toInt()}",
-                        accentColor = specs.activeContainer,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-            }
-        }
-
-        // C.2 Soft Loan Position Cards (Pending to Pay / Pending to Receive)
-        item {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(
-                    text = "SOFT LOAN POSITION",
-                    color = TextSecondary,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 1.5.sp
-                )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    InsightChip(
-                        label = "Pending to Pay",
-                        value = if (isBalanceHidden) "••••" else "$currency${totalSoftPayable.toInt()}",
-                        accentColor = ExpenseCoral,
-                        modifier = Modifier.weight(1f)
-                    )
-                    InsightChip(
-                        label = "Pending to Receive",
-                        value = if (isBalanceHidden) "••••" else "$currency${totalSoftReceivable.toInt()}",
-                        accentColor = AssetGreen,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-            }
-        }
-
-        // D. Recent Transactions
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "RECENT LEDGER ACTIVITY",
-                    color = TextSecondary,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 1.5.sp
-                )
-                Text(
-                    text = "See All",
-                    color = MidnightPrimary,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.clickable { viewModel.activeTab.value = "TRANSACTIONS" }
-                )
-            }
-        }
-
-        val limitTransList = transactions.take(4)
-        if (limitTransList.isEmpty()) {
-            item {
-                Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(vertical = 24.dp),
-                    contentAlignment = Alignment.Center
+                        .clickable { viewModel.activeTab.value = "TRANSACTIONS" },
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("No transactions found.", color = TextSecondary)
+                    Text(
+                        text = "Recent activity",
+                        color = specs.contentPrimary,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    AureumVectorIcon(
+                        name = "chevron_right",
+                        tint = specs.contentSecondary,
+                        modifier = Modifier.size(16.dp)
+                    )
                 }
-            }
-        } else {
-            items(limitTransList) { trans ->
-                TransactionRow(
-                    transaction = trans,
-                    currency = currency,
-                    viewModel = viewModel,
-                    onDelete = { viewModel.deleteTransaction(trans) }
-                )
+
+                val limitTransList = transactions.take(4)
+                if (limitTransList.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(primaryCardBg)
+                            .border(1.dp, cardBorder, RoundedCornerShape(16.dp))
+                            .padding(24.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("No recent activity yet.", color = specs.contentSecondary, fontSize = 13.sp)
+                    }
+                } else {
+                    limitTransList.forEach { trans ->
+                        TransactionRow(
+                            transaction = trans,
+                            currency = currency,
+                            viewModel = viewModel,
+                            onDelete = { viewModel.deleteTransaction(trans) }
+                        )
+                    }
+                }
             }
         }
     }
+
 
     // Vault/Account Detail Modal (Slide-up style)
     if (selectedDetailVault != null) {
@@ -891,14 +1106,16 @@ fun TransactionRow(
 
             Box(
                 modifier = Modifier
-                    .fillMaxWidth(0.88f)
+                    .fillMaxWidth(0.9f)
                     .graphicsLayer {
                         scaleX = popupScale
                         scaleY = popupScale
                         this.alpha = popupAlpha
                     }
-                    .aureumGlass(shape = RoundedCornerShape(24.dp))
-                    .padding(20.dp)
+                    .clip(RoundedCornerShape(24.dp))
+                    .background(if (specs.isDark) Color(0xFF1E2430) else Color.White)
+                    .border(1.dp, if (specs.isDark) Color.White.copy(alpha = 0.15f) else Color(0xFFE2E8F0), RoundedCornerShape(24.dp))
+                    .padding(22.dp)
             ) {
                 Column(
                     modifier = Modifier.fillMaxWidth(),
@@ -1131,18 +1348,109 @@ fun TransactionsScreen(
     val currency by viewModel.selectedCurrency.collectAsState()
     val filterType by viewModel.transactionFilterType.collectAsState()
     val categoryFilter by viewModel.transactionCategoryFilter.collectAsState()
+    val timeFilter by viewModel.transactionTimeFilter.collectAsState()
+    val customMonth by viewModel.transactionCustomMonth.collectAsState()
+    val customYear by viewModel.transactionCustomYear.collectAsState()
+
+    var showMonthPickerDialog by remember { mutableStateOf(false) }
 
     // Aggregate category types for filter
     val categoriesList = listOf("ALL") + transactions.map { it.category }.distinct()
 
-    val filteredList = transactions.filter {
-        val categoryMatch = categoryFilter == "ALL" || it.category == categoryFilter
-        val typeMatch = when (filterType) {
-            "EXPENSES" -> it.type == "EXPENSE"
-            "INCOMES" -> it.type == "INCOME"
-            else -> true
-        }
-        categoryMatch && typeMatch
+    val monthNames = remember {
+        listOf("January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December")
+    }
+    val shortMonthNames = remember {
+        listOf("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+    }
+
+    val filteredList = remember(transactions, categoryFilter, filterType, timeFilter, customMonth, customYear) {
+        transactions.filter {
+            val categoryMatch = categoryFilter == "ALL" || it.category == categoryFilter
+            val typeMatch = when (filterType) {
+                "EXPENSES" -> it.type == "EXPENSE"
+                "INCOMES" -> it.type == "INCOME"
+                else -> true
+            }
+            val timeMatch = when (timeFilter) {
+                "TODAY" -> {
+                    val cal = Calendar.getInstance().apply {
+                        set(Calendar.HOUR_OF_DAY, 0)
+                        set(Calendar.MINUTE, 0)
+                        set(Calendar.SECOND, 0)
+                        set(Calendar.MILLISECOND, 0)
+                    }
+                    it.timestamp >= cal.timeInMillis
+                }
+                "7_DAYS" -> {
+                    val cal = Calendar.getInstance().apply {
+                        set(Calendar.HOUR_OF_DAY, 0)
+                        set(Calendar.MINUTE, 0)
+                        set(Calendar.SECOND, 0)
+                        set(Calendar.MILLISECOND, 0)
+                        add(Calendar.DAY_OF_YEAR, -6) // 7 days including today
+                    }
+                    it.timestamp >= cal.timeInMillis
+                }
+                "15_DAYS" -> {
+                    val cal = Calendar.getInstance().apply {
+                        set(Calendar.HOUR_OF_DAY, 0)
+                        set(Calendar.MINUTE, 0)
+                        set(Calendar.SECOND, 0)
+                        set(Calendar.MILLISECOND, 0)
+                        add(Calendar.DAY_OF_YEAR, -14) // 15 days including today
+                    }
+                    it.timestamp >= cal.timeInMillis
+                }
+                "30_DAYS" -> {
+                    val cal = Calendar.getInstance().apply {
+                        set(Calendar.HOUR_OF_DAY, 0)
+                        set(Calendar.MINUTE, 0)
+                        set(Calendar.SECOND, 0)
+                        set(Calendar.MILLISECOND, 0)
+                        add(Calendar.DAY_OF_YEAR, -29) // 30 days including today
+                    }
+                    it.timestamp >= cal.timeInMillis
+                }
+                "THIS_MONTH" -> {
+                    val cal = Calendar.getInstance().apply {
+                        set(Calendar.DAY_OF_MONTH, 1)
+                        set(Calendar.HOUR_OF_DAY, 0)
+                        set(Calendar.MINUTE, 0)
+                        set(Calendar.SECOND, 0)
+                        set(Calendar.MILLISECOND, 0)
+                    }
+                    val startOfMonth = cal.timeInMillis
+                    cal.add(Calendar.MONTH, 1)
+                    val endOfMonth = cal.timeInMillis
+                    it.timestamp in startOfMonth until endOfMonth
+                }
+                "CUSTOM_MONTH" -> {
+                    val cal = Calendar.getInstance().apply {
+                        set(Calendar.YEAR, customYear)
+                        set(Calendar.MONTH, customMonth)
+                        set(Calendar.DAY_OF_MONTH, 1)
+                        set(Calendar.HOUR_OF_DAY, 0)
+                        set(Calendar.MINUTE, 0)
+                        set(Calendar.SECOND, 0)
+                        set(Calendar.MILLISECOND, 0)
+                    }
+                    val startOfCustom = cal.timeInMillis
+                    cal.add(Calendar.MONTH, 1)
+                    val endOfCustom = cal.timeInMillis
+                    it.timestamp in startOfCustom until endOfCustom
+                }
+                else -> true
+            }
+            categoryMatch && typeMatch && timeMatch
+        }.sortedByDescending { it.timestamp }
+    }
+
+    val periodIncome = remember(filteredList) {
+        filteredList.filter { it.type == "INCOME" }.sumOf { it.amount }
+    }
+    val periodExpense = remember(filteredList) {
+        filteredList.filter { it.type == "EXPENSE" }.sumOf { it.amount }
     }
 
     val specs = AureumThemeStyles.specs
@@ -1150,22 +1458,36 @@ fun TransactionsScreen(
     Column(
         modifier = modifier
             .fillMaxSize()
-            .padding(horizontal = 20.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+            .padding(horizontal = 18.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text(
-            text = "LEDGER ARCHIVE",
-            color = specs.contentSecondary,
-            fontSize = 11.sp,
-            fontWeight = FontWeight.Bold,
-            letterSpacing = 1.5.sp,
-            modifier = Modifier.padding(top = 16.dp)
-        )
+        // Header
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "LEDGER ARCHIVE",
+                color = specs.contentSecondary,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.5.sp
+            )
+            Text(
+                text = "${filteredList.size} records",
+                color = specs.contentSecondary,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium
+            )
+        }
 
-        // Type Filters
+        // 1. Type Filters (ALL / EXPENSES / INCOMES)
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             val activeBgColor = specs.activeContainer
             val inactiveBgColor = specs.inactiveContainer
@@ -1184,7 +1506,7 @@ fun TransactionsScreen(
                             if (!active) Modifier.border(1.dp, inactiveBorderColor, RoundedCornerShape(12.dp)) else Modifier
                         )
                         .clickable { viewModel.transactionFilterType.value = t }
-                        .padding(vertical = 10.dp),
+                        .padding(vertical = 9.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
@@ -1197,12 +1519,83 @@ fun TransactionsScreen(
             }
         }
 
-        // Category Filter scroll
+        // 2. Time Filters Horizontal Scroll (Today, Last 7 Days, 15 Days, 30 Days, This Month, Select Month, All Time)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            val timeFilterOptions = listOf(
+                "TODAY" to "Today",
+                "7_DAYS" to "Last 7 Days",
+                "15_DAYS" to "15 Days",
+                "30_DAYS" to "30 Days",
+                "THIS_MONTH" to "This Month",
+                "ALL" to "All Time"
+            )
+
+            timeFilterOptions.forEach { (key, label) ->
+                val active = timeFilter == key
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (active) specs.activeContainer else specs.inactiveContainer)
+                        .border(1.dp, if (active) Color.Transparent else specs.inactiveContainerBorder, RoundedCornerShape(8.dp))
+                        .clickable { viewModel.transactionTimeFilter.value = key }
+                        .padding(horizontal = 12.dp, vertical = 7.dp)
+                ) {
+                    Text(
+                        text = label,
+                        color = if (active) specs.onActiveContainer else specs.contentPrimary,
+                        fontSize = 11.sp,
+                        fontWeight = if (active) FontWeight.Bold else FontWeight.Medium
+                    )
+                }
+            }
+
+            // Custom Month Selector Chip
+            val isCustomMonthActive = timeFilter == "CUSTOM_MONTH"
+            val customMonthLabel = if (isCustomMonthActive) {
+                "${shortMonthNames.getOrElse(customMonth) { "Month" }} $customYear"
+            } else {
+                "Select Month..."
+            }
+
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(if (isCustomMonthActive) specs.activeContainer else specs.inactiveContainer)
+                    .border(1.dp, if (isCustomMonthActive) Color.Transparent else specs.inactiveContainerBorder, RoundedCornerShape(8.dp))
+                    .clickable { showMonthPickerDialog = true }
+                    .padding(horizontal = 12.dp, vertical = 7.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    AureumVectorIcon(
+                        name = "calendar",
+                        tint = if (isCustomMonthActive) specs.onActiveContainer else specs.contentPrimary,
+                        modifier = Modifier.size(13.dp)
+                    )
+                    Text(
+                        text = customMonthLabel,
+                        color = if (isCustomMonthActive) specs.onActiveContainer else specs.contentPrimary,
+                        fontSize = 11.sp,
+                        fontWeight = if (isCustomMonthActive) FontWeight.Bold else FontWeight.Medium
+                    )
+                }
+            }
+        }
+
+        // 3. Category Filter Scroll
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             val activeBg = specs.activeContainer
             val inactiveBg = specs.inactiveContainer
@@ -1218,24 +1611,77 @@ fun TransactionsScreen(
                         .background(if (active) activeBg else inactiveBg)
                         .border(1.dp, if (active) Color.Transparent else inactiveBorder, RoundedCornerShape(8.dp))
                         .clickable { viewModel.transactionCategoryFilter.value = cat }
-                        .padding(horizontal = 14.dp, vertical = 6.dp)
+                        .padding(horizontal = 12.dp, vertical = 5.dp)
                 ) {
                     Text(
                         text = cat,
                         color = if (active) activeText else inactiveText,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium
+                        fontSize = 11.sp,
+                        fontWeight = if (active) FontWeight.Bold else FontWeight.Medium
                     )
                 }
             }
         }
 
-        // Expense distribution Animated Pie Chart visualization
-        ExpenseDistributionPieChart(transactions = transactions, viewModel = viewModel)
+        // 4. Period Summary Box (Income / Expense Total for Selected Filter)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(specs.inactiveContainer)
+                .border(1.dp, specs.inactiveContainerBorder, RoundedCornerShape(12.dp))
+                .padding(horizontal = 14.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text("In:", color = specs.contentSecondary, fontSize = 11.sp)
+                Text(
+                    "+$currency${String.format(Locale.getDefault(), "%,.2f", periodIncome)}",
+                    color = AssetGreen,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace
+                )
+            }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text("Out:", color = specs.contentSecondary, fontSize = 11.sp)
+                Text(
+                    "-$currency${String.format(Locale.getDefault(), "%,.2f", periodExpense)}",
+                    color = ExpenseCoral,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace
+                )
+            }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                val netDiff = periodIncome - periodExpense
+                Text("Net:", color = specs.contentSecondary, fontSize = 11.sp)
+                Text(
+                    "${if (netDiff >= 0) "+" else ""}$currency${String.format(Locale.getDefault(), "%,.2f", netDiff)}",
+                    color = if (netDiff >= 0) specs.contentPrimary else ExpenseCoral,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace
+                )
+            }
+        }
 
-        // List
+        // 5. Expense distribution Animated Pie Chart visualization (Synced to filteredList)
+        ExpenseDistributionPieChart(transactions = filteredList, viewModel = viewModel)
+
+        // 6. Chronological Transaction List
         LazyColumn(
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
             contentPadding = PaddingValues(bottom = 100.dp),
             modifier = Modifier.weight(1f)
         ) {
@@ -1247,7 +1693,7 @@ fun TransactionsScreen(
                             .padding(vertical = 40.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text("No matching items.", color = TextSecondary)
+                        Text("No matching transactions in this time period.", color = specs.contentSecondary, fontSize = 13.sp)
                     }
                 }
             } else {
@@ -1261,6 +1707,107 @@ fun TransactionsScreen(
                 }
             }
         }
+    }
+
+    // Month & Year Picker Dialog
+    if (showMonthPickerDialog) {
+        var pickerYear by remember { mutableStateOf(customYear) }
+        var pickerMonth by remember { mutableStateOf(customMonth) }
+
+        AlertDialog(
+            onDismissRequest = { showMonthPickerDialog = false },
+            title = {
+                Text("Select Month & Year", color = specs.contentPrimary, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+            },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    // Year Navigator Row
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(specs.inactiveContainer)
+                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        IconButton(
+                            onClick = { pickerYear-- },
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            AureumVectorIcon(name = "chevron_left", tint = specs.contentPrimary, modifier = Modifier.size(16.dp))
+                        }
+                        Text(
+                            text = pickerYear.toString(),
+                            color = specs.contentPrimary,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace
+                        )
+                        IconButton(
+                            onClick = { pickerYear++ },
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            AureumVectorIcon(name = "chevron_right", tint = specs.contentPrimary, modifier = Modifier.size(16.dp))
+                        }
+                    }
+
+                    // 12 Months Grid (3 columns x 4 rows)
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        for (row in 0 until 4) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                for (col in 0 until 3) {
+                                    val mIndex = row * 3 + col
+                                    val isSelected = pickerMonth == mIndex
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(if (isSelected) specs.activeContainer else specs.inactiveContainer)
+                                            .border(1.dp, if (isSelected) Color.Transparent else specs.inactiveContainerBorder, RoundedCornerShape(8.dp))
+                                            .clickable { pickerMonth = mIndex }
+                                            .padding(vertical = 10.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = shortMonthNames[mIndex],
+                                            color = if (isSelected) specs.onActiveContainer else specs.contentPrimary,
+                                            fontSize = 12.sp,
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.transactionCustomYear.value = pickerYear
+                        viewModel.transactionCustomMonth.value = pickerMonth
+                        viewModel.transactionTimeFilter.value = "CUSTOM_MONTH"
+                        showMonthPickerDialog = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = specs.activeContainer),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Text("Apply Filter", color = specs.onActiveContainer, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showMonthPickerDialog = false }) {
+                    Text("Cancel", color = specs.contentSecondary, fontWeight = FontWeight.Bold)
+                }
+            }
+        )
     }
 }
 
@@ -1388,7 +1935,7 @@ fun ExpenseDistributionPieChart(transactions: List<Transaction>, viewModel: Aure
 }
 
 // -------------------------------------------------------------
-// ANALYTICS / STATS SCREEN
+// ANALYTICS / STATS SCREEN (Growth & Watch List)
 // -------------------------------------------------------------
 @Composable
 fun StatsScreen(
@@ -1397,149 +1944,435 @@ fun StatsScreen(
 ) {
     val transactions by viewModel.allTransactions.collectAsState()
     val currency by viewModel.selectedCurrency.collectAsState()
+    val isBalanceHidden by viewModel.isBalanceHidden.collectAsState()
 
     val totalExpenses = transactions.filter { it.type == "EXPENSE" }.sumOf { it.amount }
     val totalIncomes = transactions.filter { it.type == "INCOME" }.sumOf { it.amount }
     val specs = AureumThemeStyles.specs
-    val isDark = specs.isDark
+    val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
 
-    val mPrimary = MidnightPrimary
-    val mSecondary = MidnightSecondary
-    val mTertiary = MidnightTertiary
+    val primaryCardBg = if (isDark) SurfaceContainer else Color.White
+    val cardBorder = if (isDark) Color.White.copy(alpha = 0.08f) else Color(0xFFEFF1F5)
 
     // Map spend distributions
-    val categoriesSpend = remember(transactions, mPrimary, mSecondary, mTertiary) {
+    val categoriesSpend = remember(transactions) {
         val map = mutableMapOf<String, Double>()
         transactions.filter { it.type == "EXPENSE" }.forEach {
             map[it.category] = (map[it.category] ?: 0.0) + it.amount
         }
         val sortedList = map.toList().sortedByDescending { it.second }.take(3)
-        val colors = listOf(mTertiary, mPrimary, mSecondary)
+        val colors = listOf(ChequingBlue, SavingsGreen, CryptoPink)
         
         sortedList.mapIndexed { idx, pair ->
-            PieSegment(category = pair.first, value = pair.second, color = colors.getOrElse(idx) { mPrimary })
+            PieSegment(category = pair.first, value = pair.second, color = colors.getOrElse(idx) { ChequingBlue })
         }
     }
 
     val topCategory = categoriesSpend.firstOrNull()?.category ?: "None"
 
-    // Mock trend curve values matching recent spends
     val trendValues = remember(transactions) {
         val raw = transactions.filter { it.type == "EXPENSE" }.take(7).map { it.amount.toFloat() }.reversed()
         if (raw.isEmpty()) listOf(0f, 0f, 0f) else raw
     }
 
-    Column(
+    LazyColumn(
         modifier = modifier
             .fillMaxSize()
             .padding(horizontal = 20.dp),
-        verticalArrangement = Arrangement.spacedBy(20.dp)
+        verticalArrangement = Arrangement.spacedBy(20.dp),
+        contentPadding = PaddingValues(top = 8.dp, bottom = 100.dp)
     ) {
-        Text(
-            text = "FINANCIAL PERFORMANCE",
-            color = specs.contentSecondary,
-            fontSize = 11.sp,
-            fontWeight = FontWeight.Bold,
-            letterSpacing = 1.5.sp,
-            modifier = Modifier.padding(top = 16.dp)
-        )
-
-        // Bento Summary
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            val outflowBg = if (isDark) ExpenseCoral.copy(alpha = 0.05f) else Color(0xFFFFECEB)
-            val outflowBorder = if (isDark) ExpenseCoral.copy(alpha = 0.12f) else Color(0xFFFFDAD7)
-            val inflowBg = if (isDark) AssetGreen.copy(alpha = 0.05f) else Color(0xFFE8F5E9)
-            val inflowBorder = if (isDark) AssetGreen.copy(alpha = 0.12f) else Color(0xFFC8E6C9)
-
-            Box(
+        // 1. Top App Header Bar
+        item {
+            Row(
                 modifier = Modifier
-                    .weight(1f)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(outflowBg)
-                    .border(1.dp, outflowBorder, RoundedCornerShape(16.dp))
-                    .padding(14.dp)
+                    .fillMaxWidth()
+                    .padding(top = 8.dp, bottom = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
-                    Text("Total Outflow", color = specs.contentSecondary, fontSize = 11.sp)
-                    Spacer(modifier = Modifier.height(4.dp))
+                // Left: User Profile Avatar
+                Box(
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clip(CircleShape)
+                        .background(
+                            Brush.linearGradient(
+                                listOf(Color(0xFFE0E7FF), Color(0xFFC7D2FE))
+                            )
+                        )
+                        .border(1.5.dp, if (isDark) NeonLime.copy(alpha = 0.6f) else Color.White, CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
                     Text(
-                        "$currency${String.format(Locale.getDefault(), "%,.0f", totalExpenses)}",
-                        color = ExpenseCoral,
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace
+                        text = "JD",
+                        color = Color(0xFF3730A3),
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold
                     )
                 }
-            }
 
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(inflowBg)
-                    .border(1.dp, inflowBorder, RoundedCornerShape(16.dp))
-                    .padding(14.dp)
-            ) {
-                Column {
-                    Text("Total Inputs", color = specs.contentSecondary, fontSize = 11.sp)
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        "$currency${String.format(Locale.getDefault(), "%,.0f", totalIncomes)}",
-                        color = if (isDark) AssetGreen else Color(0xFF2E7D32),
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace
+                // Center: Screen Title
+                Text(
+                    text = "Wallet",
+                    color = specs.contentPrimary,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold
+                )
+
+                // Right: Notification Bell
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(primaryCardBg)
+                        .border(1.dp, cardBorder, CircleShape)
+                        .clickable { /* Notification tap */ },
+                    contentAlignment = Alignment.Center
+                ) {
+                    AureumVectorIcon(
+                        name = "bell",
+                        tint = specs.contentPrimary,
+                        modifier = Modifier.size(18.dp)
                     )
                 }
             }
         }
 
-        // Donut breakdown card
-        GlassCard(modifier = Modifier.fillMaxWidth()) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+        // 2. Hero Portfolio Growth Card (Matching Right Phone UI)
+        item {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(primaryCardBg)
+                    .border(1.dp, cardBorder, RoundedCornerShape(20.dp))
+                    .padding(18.dp)
             ) {
-                DonutChart(
-                    segments = categoriesSpend,
-                    modifier = Modifier.size(130.dp),
-                    centerTextLabel = "DOMINANCE",
-                    centerTextVal = topCategory
-                )
-
                 Column(
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.padding(start = 16.dp)
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    Text("SPEND BREAKDOWN", color = specs.contentPrimary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                    categoriesSpend.forEach { seg ->
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(seg.color))
-                            Text("${seg.category}: $currency${seg.value.toInt()}", color = specs.contentSecondary, fontSize = 11.sp)
+                    // Header Row: Trend Icon + Portfolio growth + Last 7 days
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(28.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Color(0xFFE8F5E9)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                AureumVectorIcon(
+                                    name = "stats",
+                                    tint = Color(0xFF16A34A),
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                            Text(
+                                text = "Portfolio growth",
+                                color = specs.contentPrimary,
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+
+                        Text(
+                            text = "Last 7 days",
+                            color = specs.contentSecondary,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+
+                    // Content Row: Total Growth on Left, 7-Day Bar Chart on Right
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.Bottom
+                    ) {
+                        // Total growth & percentage
+                        Column {
+                            Text(
+                                text = "Total growth",
+                                color = specs.contentSecondary,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                val growthVal = if (totalIncomes > 0) totalIncomes else 4756.67
+                                Text(
+                                    text = if (isBalanceHidden) "••••" else "$currency${String.format(Locale.getDefault(), "%,.2f", growthVal)}",
+                                    color = specs.contentPrimary,
+                                    fontSize = 24.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    letterSpacing = (-0.5).sp
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "(+6.2%)",
+                                    color = Color(0xFF16A34A),
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+
+                        // 7-day mini bar chart matching reference image
+                        val sampleDays = listOf(
+                            Pair("T", -14),
+                            Pair("W", 28),
+                            Pair("T", 38),
+                            Pair("F", -18),
+                            Pair("S", 30),
+                            Pair("S", 45),
+                            Pair("M", 34)
+                        )
+
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.Bottom
+                        ) {
+                            sampleDays.forEach { (day, valPct) ->
+                                val isPositive = valPct >= 0
+                                val barHeight = (kotlin.math.abs(valPct) * 0.9f).coerceIn(12f, 48f)
+                                val barColor = if (isPositive) NeonLime else ExpenseCoral
+
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .width(7.dp)
+                                            .height(barHeight.dp)
+                                            .clip(RoundedCornerShape(4.dp))
+                                            .background(barColor)
+                                    )
+                                    Text(
+                                        text = day,
+                                        color = specs.contentSecondary,
+                                        fontSize = 9.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                            }
                         }
                     }
                 }
             }
         }
 
-        // Spending trend curve line
-        GlassCard(modifier = Modifier.fillMaxWidth()) {
-            Text(
-                "SPENDING TREND VECTOR",
-                color = specs.contentSecondary,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold,
-                letterSpacing = 1.0.sp
-            )
-            Spacer(modifier = Modifier.height(16.dp))
-            TrendLineChart(values = trendValues, accentColor = specs.activeContainer)
+        // 3. Watch list Section (Exact Match to Right Phone UI)
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Watch list",
+                        color = specs.contentPrimary,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    AureumVectorIcon(
+                        name = "chevron_right",
+                        tint = specs.contentSecondary,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+
+                // Reference watchlist assets: Bitcoin, Ethereum, Solana, USD Coin, Veritaseum
+                val watchListItems = listOf(
+                    WatchAsset("Bitcoin", "BTC", "$83,241 USD", "+$1,204.50 (+1.47%)", true, BitcoinOrange, "btc"),
+                    WatchAsset("Ethereum", "ETH", "$1,934.20 USD", "+$84.10 (+4.55%)", true, EthereumSlate, "eth"),
+                    WatchAsset("Solana", "SOL", "$128.40 USD", "-$9.32 (-6.77%)", false, SolanaPurple, "sol"),
+                    WatchAsset("USD Coin", "USDC", "$1.00 USD", "+$0.001 (+0.10%)", true, UsdcBlue, "usdc"),
+                    WatchAsset("Veritaseum", "VRI", "$11.68 USD", "+$0.03 (+9.6%)", true, VeritaseumGold, "hexagon_gear")
+                )
+
+                watchListItems.forEach { item ->
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(primaryCardBg)
+                            .border(1.dp, cardBorder, RoundedCornerShape(16.dp))
+                            .padding(horizontal = 14.dp, vertical = 13.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            // Left: Badge & Name/Symbol
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(38.dp)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(item.color),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    AureumVectorIcon(
+                                        name = item.icon,
+                                        tint = Color.White,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                                Column {
+                                    Text(
+                                        text = item.name,
+                                        color = specs.contentPrimary,
+                                        fontSize = 15.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Text(
+                                        text = item.symbol,
+                                        color = specs.contentSecondary,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
+                            }
+
+                            // Right: Price & Change
+                            Column(horizontalAlignment = Alignment.End) {
+                                Text(
+                                    text = item.price,
+                                    color = specs.contentPrimary,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = item.change,
+                                    color = if (item.isPositive) Color(0xFF16A34A) else ExpenseCoral,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 4. Bento Inflow / Outflow Cards
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                val outflowBg = if (isDark) ExpenseCoral.copy(alpha = 0.05f) else Color(0xFFFFECEB)
+                val outflowBorder = if (isDark) ExpenseCoral.copy(alpha = 0.12f) else Color(0xFFFFDAD7)
+                val inflowBg = if (isDark) AssetGreen.copy(alpha = 0.05f) else Color(0xFFE8F5E9)
+                val inflowBorder = if (isDark) AssetGreen.copy(alpha = 0.12f) else Color(0xFFC8E6C9)
+
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(outflowBg)
+                        .border(1.dp, outflowBorder, RoundedCornerShape(16.dp))
+                        .padding(14.dp)
+                ) {
+                    Column {
+                        Text("Total Outflow", color = specs.contentSecondary, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            "$currency${String.format(Locale.getDefault(), "%,.0f", totalExpenses)}",
+                            color = ExpenseCoral,
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(inflowBg)
+                        .border(1.dp, inflowBorder, RoundedCornerShape(16.dp))
+                        .padding(14.dp)
+                ) {
+                    Column {
+                        Text("Total Inputs", color = specs.contentSecondary, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            "$currency${String.format(Locale.getDefault(), "%,.0f", totalIncomes)}",
+                            color = if (isDark) AssetGreen else Color(0xFF2E7D32),
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+        }
+
+        // 5. Category Breakdown Donut Card
+        item {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(primaryCardBg)
+                    .border(1.dp, cardBorder, RoundedCornerShape(16.dp))
+                    .padding(16.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    DonutChart(
+                        segments = categoriesSpend,
+                        modifier = Modifier.size(110.dp),
+                        centerTextLabel = "TOP",
+                        centerTextVal = topCategory
+                    )
+
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.padding(start = 16.dp)
+                    ) {
+                        Text("SPEND BREAKDOWN", color = specs.contentPrimary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        categoriesSpend.forEach { seg ->
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(seg.color))
+                                Text("${seg.category}: $currency${seg.value.toInt()}", color = specs.contentSecondary, fontSize = 11.sp)
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
+
+private data class WatchAsset(
+    val name: String,
+    val symbol: String,
+    val price: String,
+    val change: String,
+    val isPositive: Boolean,
+    val color: Color,
+    val icon: String
+)
+
 
 // -------------------------------------------------------------
 // ACCOUNTS SCREEN
@@ -3336,6 +4169,7 @@ fun AddTransactionScreen(
     var destinationAccountId by remember { mutableStateOf<Int?>(null) }
     var transferFeeStr by remember { mutableStateOf("0") }
     var receiptPath by remember { mutableStateOf<String?>(null) }
+    var selectedTimestamp by remember { mutableStateOf(System.currentTimeMillis()) }
 
     val editingTx by viewModel.editingTransaction.collectAsState()
 
@@ -3349,6 +4183,7 @@ fun AddTransactionScreen(
             destinationAccountId = tx.toAccountId
             transferFeeStr = if (tx.fee % 1.0 == 0.0) tx.fee.toInt().toString() else tx.fee.toString()
             receiptPath = tx.receiptPath
+            selectedTimestamp = tx.timestamp
         }
     }
 
@@ -3385,21 +4220,22 @@ fun AddTransactionScreen(
         modifier = modifier
             .fillMaxSize()
             .padding(horizontal = 20.dp)
-            .padding(top = 16.dp, bottom = 120.dp)
+            .padding(top = 12.dp, bottom = 24.dp)
             .verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(20.dp)
+        verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+        // 1. Header Bar
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                "TRANSACTION CREATION",
-                color = specs.contentSecondary,
-                fontSize = 11.sp,
+                if (editingTx != null) "EDIT TRANSACTION" else "NEW TRANSACTION",
+                color = specs.contentPrimary,
+                fontSize = 16.sp,
                 fontWeight = FontWeight.Bold,
-                letterSpacing = 1.5.sp
+                letterSpacing = 1.sp
             )
             Button(
                 onClick = onComplete,
@@ -3407,13 +4243,14 @@ fun AddTransactionScreen(
                     containerColor = specs.inactiveContainer
                 ),
                 shape = RoundedCornerShape(12.dp),
+                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
                 modifier = Modifier.border(1.dp, specs.inactiveContainerBorder, RoundedCornerShape(12.dp))
             ) {
-                Text("Dismiss", color = specs.contentPrimary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Text("Dismiss", color = specs.contentPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
             }
         }
 
-        // Mode switch
+        // 2. Mode switch (Expense / Income / Transfer)
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -3427,180 +4264,32 @@ fun AddTransactionScreen(
                     },
                     modifier = Modifier
                         .weight(1f)
+                        .height(46.dp)
                         .then(
                             if (!active) Modifier.border(1.dp, specs.inactiveContainerBorder, RoundedCornerShape(12.dp)) else Modifier
                         ),
+                    contentPadding = PaddingValues(0.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = if (active) specs.activeContainer else specs.inactiveContainer
                     ),
                     shape = RoundedCornerShape(12.dp)
                 ) {
-                    Text(t, fontSize = 10.sp, color = if (active) specs.onActiveContainer else specs.contentPrimary, fontWeight = FontWeight.Bold)
-                }
-            }
-        }
-
-        // Amount Display (Tapping launches the keypad dialog)
-        Text("TRANSACTION AMOUNT", color = specs.contentSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(20.dp))
-                .background(specs.inactiveContainer)
-                .border(1.dp, specs.activeContainer.copy(alpha = 0.4f), RoundedCornerShape(20.dp))
-                .clickable {
-                    keypadTarget = "AMOUNT"
-                    showKeyboard = true
-                }
-                .padding(20.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(
-                    text = "$currency$amountStr",
-                    color = if (selectedType == "INCOME") AssetGreen else if (selectedType == "EXPENSE") ExpenseCoral else specs.contentPrimary,
-                    fontSize = 36.sp,
-                    fontWeight = FontWeight.Bold,
-                    fontFamily = FontFamily.Monospace
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = "Tap to edit amount",
-                    color = specs.contentSecondary,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Medium
-                )
-            }
-        }
-
-        // Category selection grid (Regular expenses/incomes only)
-        if (selectedType != "TRANSFER") {
-            Text("SELECT CATEGORY", color = specs.contentSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                filteredCategories.forEach { cat ->
-                    val active = selectedCategory == cat.name
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(if (active) specs.activeContainer else specs.inactiveContainer)
-                            .border(1.dp, if (active) Color.Transparent else specs.inactiveContainerBorder, RoundedCornerShape(10.dp))
-                            .clickable { selectedCategory = cat.name }
-                            .padding(horizontal = 14.dp, vertical = 10.dp)
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            AureumVectorIcon(
-                                name = cat.icon,
-                                tint = if (active) specs.onActiveContainer else specs.contentPrimary,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Text(cat.name, color = if (active) specs.onActiveContainer else specs.contentPrimary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                        }
-                    }
-                }
-            }
-        }
-
-        // Source Account
-        Text("SRC ACCOUNT", color = specs.contentSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            accounts.forEach { acc ->
-                val active = selectedAccountId == acc.id
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(if (active) specs.activeContainer else specs.inactiveContainer)
-                        .border(1.dp, if (active) Color.Transparent else specs.inactiveContainerBorder, RoundedCornerShape(10.dp))
-                        .clickable { 
-                            selectedAccountId = acc.id 
-                            if (destinationAccountId == acc.id) {
-                                destinationAccountId = null
-                            }
-                        }
-                        .padding(horizontal = 14.dp, vertical = 10.dp)
-                ) {
-                    Text(acc.name, color = if (active) specs.onActiveContainer else specs.contentPrimary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                }
-            }
-        }
-
-        // Destination Account & Fee for Transfers
-        if (selectedType == "TRANSFER") {
-            Text("DEST ACCOUNT", color = specs.contentSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                accounts.filter { it.id != selectedAccountId }.forEach { acc ->
-                    val active = destinationAccountId == acc.id
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(if (active) specs.activeContainer else specs.inactiveContainer)
-                            .border(1.dp, if (active) Color.Transparent else specs.inactiveContainerBorder, RoundedCornerShape(10.dp))
-                            .clickable { destinationAccountId = acc.id }
-                            .padding(horizontal = 14.dp, vertical = 10.dp)
-                    ) {
-                        Text(acc.name, color = if (active) specs.onActiveContainer else specs.contentPrimary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(4.dp))
-
-            Text("TRANSFER FEE (OPTIONAL)", color = specs.contentSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(specs.inactiveContainer)
-                    .border(1.dp, specs.inactiveContainerBorder, RoundedCornerShape(16.dp))
-                    .clickable {
-                        keypadTarget = "FEE"
-                        showKeyboard = true
-                    }
-                    .padding(16.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
-                        text = "$currency$transferFeeStr",
-                        color = specs.contentPrimary,
-                        fontSize = 24.sp,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "Tap to enter transfer fee",
-                        color = specs.contentSecondary,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Medium
+                        t,
+                        fontSize = 12.sp,
+                        color = if (active) specs.onActiveContainer else specs.contentPrimary,
+                        fontWeight = FontWeight.Bold
                     )
                 }
             }
         }
 
-        // Memo field descriptions
-        Text("MEMO / DESCRIPTION", color = specs.contentSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        // 3. Description / Memo Field
         TextField(
             value = noteStr,
             onValueChange = { noteStr = it },
-            placeholder = { Text("Add transaction description...", color = specs.contentSecondary) },
+            placeholder = { Text("What is this transaction for? (Description)", color = specs.contentSecondary, fontSize = 13.sp) },
+            singleLine = true,
             colors = TextFieldDefaults.colors(
                 focusedContainerColor = specs.inactiveContainer,
                 unfocusedContainerColor = specs.inactiveContainer,
@@ -3611,67 +4300,373 @@ fun AddTransactionScreen(
                 disabledContainerColor = Color.Transparent,
                 disabledIndicatorColor = Color.Transparent
             ),
-            shape = RoundedCornerShape(8.dp),
+            shape = RoundedCornerShape(12.dp),
             modifier = Modifier
                 .fillMaxWidth()
-                .border(1.dp, specs.inactiveContainerBorder, RoundedCornerShape(8.dp))
+                .height(54.dp)
+                .border(1.dp, specs.inactiveContainerBorder, RoundedCornerShape(12.dp))
         )
 
-        // Receipt / Image picking section
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("ATTACH RECEIPT IMAGE (OPTIONAL)", color = specs.contentSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-            if (receiptPath == null) {
-                Box(
+        // 4. Amount Hero Input Box (Spacious, prominent)
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .background(specs.inactiveContainer)
+                .border(1.dp, specs.activeContainer.copy(alpha = 0.4f), RoundedCornerShape(16.dp))
+                .clickable {
+                    keypadTarget = "AMOUNT"
+                    showKeyboard = true
+                }
+                .padding(horizontal = 18.dp, vertical = 14.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        text = "Amount",
+                        color = specs.contentSecondary,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        letterSpacing = 0.5.sp
+                    )
+                    Text(
+                        text = "$currency$amountStr",
+                        color = if (selectedType == "INCOME") AssetGreen else if (selectedType == "EXPENSE") ExpenseCoral else specs.contentPrimary,
+                        fontSize = 26.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(specs.activeContainer.copy(alpha = 0.12f))
+                        .padding(horizontal = 10.dp, vertical = 6.dp)
+                ) {
+                    Text(
+                        text = "Keypad",
+                        color = specs.activeContainer,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    AureumVectorIcon(name = "edit", tint = specs.activeContainer, modifier = Modifier.size(15.dp))
+                }
+            }
+        }
+
+        // 5. Date & Time Row
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            val dateFormatter = remember { SimpleDateFormat("EEE, dd MMM yyyy", Locale.getDefault()) }
+            val timeFormatter = remember { SimpleDateFormat("hh:mm a", Locale.getDefault()) }
+
+            // Date Button
+            Box(
+                modifier = Modifier
+                    .weight(1.2f)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(specs.inactiveContainer)
+                    .border(1.dp, specs.inactiveContainerBorder, RoundedCornerShape(12.dp))
+                    .clickable {
+                        val cal = Calendar.getInstance().apply { timeInMillis = selectedTimestamp }
+                        DatePickerDialog(
+                            context,
+                            { _, year, month, dayOfMonth ->
+                                val newCal = Calendar.getInstance().apply {
+                                    timeInMillis = selectedTimestamp
+                                    set(Calendar.YEAR, year)
+                                    set(Calendar.MONTH, month)
+                                    set(Calendar.DAY_OF_MONTH, dayOfMonth)
+                                }
+                                selectedTimestamp = newCal.timeInMillis
+                            },
+                            cal.get(Calendar.YEAR),
+                            cal.get(Calendar.MONTH),
+                            cal.get(Calendar.DAY_OF_MONTH)
+                        ).show()
+                    }
+                    .padding(horizontal = 14.dp, vertical = 12.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    AureumVectorIcon(name = "calendar", tint = specs.activeContainer, modifier = Modifier.size(18.dp))
+                    Text(
+                        dateFormatter.format(Date(selectedTimestamp)),
+                        color = specs.contentPrimary,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+
+            // Time Button
+            Box(
+                modifier = Modifier
+                    .weight(0.9f)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(specs.inactiveContainer)
+                    .border(1.dp, specs.inactiveContainerBorder, RoundedCornerShape(12.dp))
+                    .clickable {
+                        val cal = Calendar.getInstance().apply { timeInMillis = selectedTimestamp }
+                        TimePickerDialog(
+                            context,
+                            { _, hourOfDay, minute ->
+                                val newCal = Calendar.getInstance().apply {
+                                    timeInMillis = selectedTimestamp
+                                    set(Calendar.HOUR_OF_DAY, hourOfDay)
+                                    set(Calendar.MINUTE, minute)
+                                }
+                                selectedTimestamp = newCal.timeInMillis
+                            },
+                            cal.get(Calendar.HOUR_OF_DAY),
+                            cal.get(Calendar.MINUTE),
+                            false
+                        ).show()
+                    }
+                    .padding(horizontal = 14.dp, vertical = 12.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    AureumVectorIcon(name = "clock", tint = specs.activeContainer, modifier = Modifier.size(18.dp))
+                    Text(
+                        timeFormatter.format(Date(selectedTimestamp)),
+                        color = specs.contentPrimary,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+        }
+
+        // 6. Category Selection Section
+        if (selectedType != "TRANSFER") {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    text = "CATEGORY",
+                    color = specs.contentSecondary,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.sp
+                )
+                Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(80.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(specs.inactiveContainer)
-                        .border(1.dp, specs.inactiveContainerBorder, RoundedCornerShape(12.dp))
-                        .clickable { imagePickerLauncher.launch("image/*") },
-                    contentAlignment = Alignment.Center
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        AureumVectorIcon(name = "image", tint = specs.contentSecondary, modifier = Modifier.size(24.dp))
-                        Text("Add Receipt / Image from Device", color = specs.contentSecondary, fontSize = 13.sp)
+                    filteredCategories.forEach { cat ->
+                        val active = selectedCategory == cat.name
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(if (active) specs.activeContainer else specs.inactiveContainer)
+                                .border(1.dp, if (active) Color.Transparent else specs.inactiveContainerBorder, RoundedCornerShape(10.dp))
+                                .clickable { selectedCategory = cat.name }
+                                .padding(horizontal = 14.dp, vertical = 8.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                AureumVectorIcon(
+                                    name = cat.icon,
+                                    tint = if (active) specs.onActiveContainer else specs.contentPrimary,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                                Text(
+                                    cat.name,
+                                    color = if (active) specs.onActiveContainer else specs.contentPrimary,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 12.sp
+                                )
+                            }
+                        }
                     }
                 }
-            } else {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(180.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(specs.inactiveContainer)
-                        .border(1.dp, specs.inactiveContainerBorder, RoundedCornerShape(12.dp))
-                ) {
-                    AsyncImage(
-                        model = receiptPath,
-                        contentDescription = "Picked Receipt Image",
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = androidx.compose.ui.layout.ContentScale.Crop
-                    )
-                    IconButton(
-                        onClick = { receiptPath = null },
+            }
+        }
+
+        // 7. Source Account Section
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(
+                text = if (selectedType == "TRANSFER") "FROM VAULT" else "PAYMENT / VAULT ACCOUNT",
+                color = specs.contentSecondary,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.sp
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                accounts.forEach { acc ->
+                    val active = selectedAccountId == acc.id
+                    Box(
                         modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(8.dp)
-                            .background(Color.Black.copy(alpha = 0.5f), CircleShape)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(if (active) specs.activeContainer else specs.inactiveContainer)
+                            .border(1.dp, if (active) Color.Transparent else specs.inactiveContainerBorder, RoundedCornerShape(10.dp))
+                            .clickable { 
+                                selectedAccountId = acc.id 
+                                if (destinationAccountId == acc.id) {
+                                    destinationAccountId = null
+                                }
+                            }
+                            .padding(horizontal = 14.dp, vertical = 8.dp)
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = "Remove Image",
-                            tint = Color.White
+                        Text(
+                            acc.name,
+                            color = if (active) specs.onActiveContainer else specs.contentPrimary,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp
                         )
                     }
                 }
             }
         }
 
-        // Save Button
+        // 8. Destination Account & Transfer Fee (For Transfers)
+        if (selectedType == "TRANSFER") {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    text = "TO VAULT",
+                    color = specs.contentSecondary,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.sp
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    accounts.filter { it.id != selectedAccountId }.forEach { acc ->
+                        val active = destinationAccountId == acc.id
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(if (active) specs.activeContainer else specs.inactiveContainer)
+                                .border(1.dp, if (active) Color.Transparent else specs.inactiveContainerBorder, RoundedCornerShape(10.dp))
+                                .clickable { destinationAccountId = acc.id }
+                                .padding(horizontal = 14.dp, vertical = 8.dp)
+                        ) {
+                            Text(
+                                acc.name,
+                                color = if (active) specs.onActiveContainer else specs.contentPrimary,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Transfer Fee Box
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(specs.inactiveContainer)
+                    .border(1.dp, specs.inactiveContainerBorder, RoundedCornerShape(12.dp))
+                    .clickable {
+                        keypadTarget = "FEE"
+                        showKeyboard = true
+                    }
+                    .padding(horizontal = 16.dp, vertical = 12.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Transfer Fee (Optional):", color = specs.contentSecondary, fontSize = 12.sp)
+                    Text("$currency$transferFeeStr", color = specs.contentPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+                }
+            }
+        }
+
+        // 9. Attach Receipt Image
+        if (receiptPath == null) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(specs.inactiveContainer)
+                    .border(1.dp, specs.inactiveContainerBorder, RoundedCornerShape(12.dp))
+                    .clickable { imagePickerLauncher.launch("image/*") }
+                    .padding(horizontal = 16.dp, vertical = 12.dp)
+            ) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    AureumVectorIcon(name = "image", tint = specs.activeContainer, modifier = Modifier.size(18.dp))
+                    Text("Attach Receipt / Voucher Image (Optional)", color = specs.contentSecondary, fontSize = 12.sp)
+                }
+            }
+        } else {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(specs.inactiveContainer)
+                    .border(1.dp, specs.inactiveContainerBorder, RoundedCornerShape(12.dp))
+                    .padding(10.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(42.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                    ) {
+                        AsyncImage(
+                            model = receiptPath,
+                            contentDescription = "Picked Receipt Image",
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                        )
+                    }
+                    Text("Receipt Attached", color = specs.contentPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+                IconButton(
+                    onClick = { receiptPath = null },
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Remove Image",
+                        tint = ExpenseCoral,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(4.dp))
+
+        // 10. Log / Update Transaction Button
         Button(
             onClick = {
                 val value = amountStr.toDoubleOrNull() ?: 0.0
@@ -3687,7 +4682,7 @@ fun AddTransactionScreen(
                             accountId = selectedAccountId,
                             toAccountId = destinationAccountId,
                             note = noteStr,
-                            timestamp = currentEdit.timestamp,
+                            timestamp = selectedTimestamp,
                             receiptPath = receiptPath,
                             fee = feeVal
                         )
@@ -3700,7 +4695,7 @@ fun AddTransactionScreen(
                             accountId = selectedAccountId,
                             toAccountId = destinationAccountId,
                             note = noteStr,
-                            timestamp = System.currentTimeMillis(),
+                            timestamp = selectedTimestamp,
                             receiptPath = receiptPath,
                             fee = feeVal
                         )
@@ -3710,11 +4705,17 @@ fun AddTransactionScreen(
             },
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 12.dp),
+                .height(52.dp),
             colors = ButtonDefaults.buttonColors(containerColor = specs.activeContainer),
-            shape = RoundedCornerShape(16.dp)
+            shape = RoundedCornerShape(14.dp)
         ) {
-            Text(if (editingTx != null) "UPDATE TRANSACTION" else "LOG TRANSACTION", color = specs.onActiveContainer, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            Text(
+                if (editingTx != null) "UPDATE TRANSACTION" else "LOG TRANSACTION",
+                color = specs.onActiveContainer,
+                fontWeight = FontWeight.Bold,
+                fontSize = 14.sp,
+                letterSpacing = 0.5.sp
+            )
         }
     }
 
@@ -3840,12 +4841,17 @@ fun SettingsScreen(
     viewModel: AureumViewModel,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
+    val clipboardManager = LocalClipboardManager.current
+    val specs = AureumThemeStyles.specs
+
     val currency by viewModel.selectedCurrency.collectAsState()
     val themeOverride by viewModel.isDarkTheme.collectAsState()
     val exportStatusMsg by viewModel.exportMessage.collectAsState()
     val secureMode by viewModel.secureModeEnabled.collectAsState()
 
     val isPinGuardEnabled by viewModel.isPinGuardEnabled.collectAsState()
+    val isBiometricEnabled by viewModel.isBiometricEnabled.collectAsState()
     val correctPin by viewModel.correctPin.collectAsState()
     var showChangePinDialog by remember { mutableStateOf(false) }
     var newPinInput by remember { mutableStateOf("") }
@@ -3857,9 +4863,54 @@ fun SettingsScreen(
     var showCategoryManager by remember { mutableStateOf(false) }
     var showRestoreDefaultsConfirm by remember { mutableStateOf(false) }
 
-    val context = LocalContext.current
-    val clipboardManager = LocalClipboardManager.current
-    val specs = AureumThemeStyles.specs
+    // Backup & Restore State
+    var showExportOptionsDialog by remember { mutableStateOf(false) }
+    var exportTransactions by remember { mutableStateOf(true) }
+    var exportImages by remember { mutableStateOf(true) }
+    var exportAccounts by remember { mutableStateOf(true) }
+    var exportCategories by remember { mutableStateOf(true) }
+    var exportLoans by remember { mutableStateOf(true) }
+    var restoreReportMsg by remember { mutableStateOf<String?>(null) }
+
+    val coroutineScope = rememberCoroutineScope()
+
+    val exportJsonLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        if (uri != null) {
+            coroutineScope.launch {
+                val json = viewModel.generateBackupJsonString(
+                    includeTransactions = exportTransactions,
+                    includeImages = exportImages,
+                    includeAccounts = exportAccounts,
+                    includeCategories = exportCategories,
+                    includeLoans = exportLoans
+                )
+                val success = viewModel.writeJsonToUri(context, uri, json)
+                if (success) {
+                    android.widget.Toast.makeText(context, "Backup exported successfully to JSON file!", android.widget.Toast.LENGTH_LONG).show()
+                } else {
+                    android.widget.Toast.makeText(context, "Failed to save backup file.", android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    val importJsonLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri ->
+        if (uri != null) {
+            coroutineScope.launch {
+                val json = viewModel.readJsonFromUri(context, uri)
+                if (json != null) {
+                    val report = viewModel.importBackupFromJsonString(context, json)
+                    restoreReportMsg = report
+                } else {
+                    android.widget.Toast.makeText(context, "Failed to read selected JSON file.", android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
 
     Column(
         modifier = modifier
@@ -3972,6 +5023,26 @@ fun SettingsScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column {
+                    Text("Biometric / Fingerprint Sensor", color = specs.contentPrimary, fontSize = 14.sp)
+                    Text("Unlock app using fingerprint or face", color = specs.contentSecondary, fontSize = 11.sp)
+                }
+                Switch(
+                    checked = isBiometricEnabled,
+                    onCheckedChange = { viewModel.setBiometricEnabled(it) },
+                    colors = SwitchDefaults.colors(checkedThumbColor = specs.activeContainer)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+            Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(specs.inactiveContainerBorder))
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
                     Text("Secure Anti-Screenshot Mode", color = specs.contentPrimary, fontSize = 14.sp)
                     Text("Enable Window Secure flag", color = specs.contentSecondary, fontSize = 11.sp)
                 }
@@ -3983,22 +5054,81 @@ fun SettingsScreen(
             }
         }
 
-        // Offline File Exporter CSV Box
+        // Backup & Restore Engine (JSON & CSV)
         GlassCard(modifier = Modifier.fillMaxWidth()) {
+            Text("DATA BACKUP & RESTORATION", color = specs.contentPrimary, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+            Text("Create full or modular offline backups, export CSV sheets, or restore your data.", color = specs.contentSecondary, fontSize = 11.sp)
+            
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // 1. Modular JSON Export
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("CSV OFFLINE LEDGER EXPORT", color = specs.contentPrimary, fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                    Text("Generates clean CSV of all savings, cash sheets", color = specs.contentSecondary, fontSize = 11.sp)
+                    Text("Modular JSON Backup", color = specs.contentPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    Text("Export accounts, transactions, categories, and loans", color = specs.contentSecondary, fontSize = 11.sp)
+                }
+                Button(
+                    onClick = { showExportOptionsDialog = true },
+                    colors = ButtonDefaults.buttonColors(containerColor = specs.activeContainer),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    AureumVectorIcon(name = "file_download", tint = specs.onActiveContainer, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Export", color = specs.onActiveContainer, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+            Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(specs.inactiveContainerBorder))
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // 2. JSON Import
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Import Backup File", color = specs.contentPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    Text("Restore data from a previously exported .json file", color = specs.contentSecondary, fontSize = 11.sp)
+                }
+                Button(
+                    onClick = { importJsonLauncher.launch("*/*") },
+                    colors = ButtonDefaults.buttonColors(containerColor = specs.inactiveContainer),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.border(1.dp, specs.inactiveContainerBorder, RoundedCornerShape(10.dp))
+                ) {
+                    AureumVectorIcon(name = "file_upload", tint = specs.contentPrimary, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Import", color = specs.contentPrimary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+            Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(specs.inactiveContainerBorder))
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // 3. CSV Export
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("CSV Offline Ledger Export", color = specs.contentPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    Text("Generates clean CSV spreadsheet of transactions", color = specs.contentSecondary, fontSize = 11.sp)
                 }
                 Button(
                     onClick = { viewModel.exportLedgerToCsv() },
-                    colors = ButtonDefaults.buttonColors(containerColor = specs.activeContainer)
+                    colors = ButtonDefaults.buttonColors(containerColor = specs.inactiveContainer),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.border(1.dp, specs.inactiveContainerBorder, RoundedCornerShape(10.dp))
                 ) {
-                    Text("Export", color = specs.onActiveContainer, fontWeight = FontWeight.Bold)
+                    Text("CSV", color = specs.contentPrimary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                 }
             }
         }
@@ -4067,6 +5197,179 @@ fun SettingsScreen(
                 }
             }
         }
+    }
+
+    // Modular JSON Export Options Dialog
+    if (showExportOptionsDialog) {
+        AlertDialog(
+            onDismissRequest = { showExportOptionsDialog = false },
+            title = {
+                Text("Select Data to Export", color = specs.contentPrimary, fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(
+                        "Choose which data components you want to include in your offline JSON backup file:",
+                        color = specs.contentSecondary,
+                        fontSize = 12.sp
+                    )
+
+                    // 1. Transactions
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(specs.inactiveContainer)
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Transactions & Logs", color = specs.contentPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            Text("All income, expense, and transfers", color = specs.contentSecondary, fontSize = 10.sp)
+                        }
+                        Checkbox(
+                            checked = exportTransactions,
+                            onCheckedChange = { exportTransactions = it },
+                            colors = CheckboxDefaults.colors(checkedColor = specs.activeContainer)
+                        )
+                    }
+
+                    // 1.1 Include Images (Indented if transactions selected)
+                    if (exportTransactions) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 16.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(specs.inactiveContainer.copy(alpha = 0.6f))
+                                .padding(horizontal = 10.dp, vertical = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Include Receipt Images", color = specs.contentPrimary, fontSize = 12.sp)
+                                Text("Embedded inside JSON as Base64", color = specs.contentSecondary, fontSize = 9.sp)
+                            }
+                            Checkbox(
+                                checked = exportImages,
+                                onCheckedChange = { exportImages = it },
+                                colors = CheckboxDefaults.colors(checkedColor = specs.activeContainer)
+                            )
+                        }
+                    }
+
+                    // 2. Accounts
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(specs.inactiveContainer)
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Vault Accounts & Cards", color = specs.contentPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            Text("Custom accounts, balances, credit limits", color = specs.contentSecondary, fontSize = 10.sp)
+                        }
+                        Checkbox(
+                            checked = exportAccounts,
+                            onCheckedChange = { exportAccounts = it },
+                            colors = CheckboxDefaults.colors(checkedColor = specs.activeContainer)
+                        )
+                    }
+
+                    // 3. Categories
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(specs.inactiveContainer)
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Categories & Display Order", color = specs.contentPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            Text("Custom category icons and ordering", color = specs.contentSecondary, fontSize = 10.sp)
+                        }
+                        Checkbox(
+                            checked = exportCategories,
+                            onCheckedChange = { exportCategories = it },
+                            colors = CheckboxDefaults.colors(checkedColor = specs.activeContainer)
+                        )
+                    }
+
+                    // 4. Loans & Profiles
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(specs.inactiveContainer)
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Loan Channels & Profiles", color = specs.contentPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            Text("Soft loans, formal facilities, schedules", color = specs.contentSecondary, fontSize = 10.sp)
+                        }
+                        Checkbox(
+                            checked = exportLoans,
+                            onCheckedChange = { exportLoans = it },
+                            colors = CheckboxDefaults.colors(checkedColor = specs.activeContainer)
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showExportOptionsDialog = false
+                        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+                        exportJsonLauncher.launch("aureum_backup_$timestamp.json")
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = specs.activeContainer)
+                ) {
+                    Text("Export JSON", color = specs.onActiveContainer, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showExportOptionsDialog = false }) {
+                    Text("Cancel", color = specs.contentSecondary, fontWeight = FontWeight.Bold)
+                }
+            }
+        )
+    }
+
+    // Restore Report Bottom Sheet Alert
+    if (restoreReportMsg != null) {
+        AlertDialog(
+            onDismissRequest = { restoreReportMsg = null },
+            title = { Text("Backup Restoration Report", color = specs.contentPrimary, fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    text = restoreReportMsg ?: "",
+                    color = specs.contentPrimary,
+                    fontSize = 13.sp,
+                    lineHeight = 18.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = { restoreReportMsg = null },
+                    colors = ButtonDefaults.buttonColors(containerColor = specs.activeContainer)
+                ) {
+                    Text("Done", color = specs.onActiveContainer, fontWeight = FontWeight.Bold)
+                }
+            }
+        )
     }
 
     // Export output bottom sheet alert
@@ -4416,18 +5719,43 @@ fun CategoryManagerOverlay(
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Row(
+                                modifier = Modifier.weight(1f),
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                // Category Icon on Left side
+                                // Left Side: Reorder Handle & Quick Move Controls
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(0.dp)
+                                ) {
+                                    IconButton(
+                                        onClick = { viewModel.moveCategoryUp(cat) },
+                                        modifier = Modifier.size(24.dp)
+                                    ) {
+                                        AureumVectorIcon(name = "arrow_up", tint = specs.contentSecondary, modifier = Modifier.size(13.dp))
+                                    }
+                                    AureumVectorIcon(
+                                        name = "drag_handle",
+                                        tint = specs.contentSecondary.copy(alpha = 0.8f),
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    IconButton(
+                                        onClick = { viewModel.moveCategoryDown(cat) },
+                                        modifier = Modifier.size(24.dp)
+                                    ) {
+                                        AureumVectorIcon(name = "arrow_down", tint = specs.contentSecondary, modifier = Modifier.size(13.dp))
+                                    }
+                                }
+
+                                // Category Icon
                                 Box(
                                     modifier = Modifier
-                                        .size(36.dp)
+                                        .size(34.dp)
                                         .clip(CircleShape)
                                         .background(specs.activeContainer.copy(alpha = 0.15f)),
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    AureumVectorIcon(name = cat.icon, tint = specs.contentPrimary, modifier = Modifier.size(18.dp))
+                                    AureumVectorIcon(name = cat.icon, tint = specs.contentPrimary, modifier = Modifier.size(17.dp))
                                 }
 
                                 Column {
