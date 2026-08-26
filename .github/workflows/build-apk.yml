@@ -30,28 +30,36 @@ jobs:
     - name: Setup Gradle
       uses: gradle/actions/setup-gradle@v4
 
-    - name: Generate missing debug.keystore
+    # Prepare build environment and keystore
+    - name: Configure Gradle properties & Generate debug.keystore
       run: |
+        # Generate debug keystore for signing
         keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
-        find . -type d -name "app" -exec cp debug.keystore {} \;
-        cp debug.keystore /home/runner/work/money-manager1/money-manager1/ || true
+        find . -type d -name "app" -exec cp debug.keystore {} \; || true
+        
+        # Ensure out-of-process Kotlin compilation daemon on CI to prevent Compose compiler plugin classloader conflicts
+        sed -i 's/kotlin.compiler.execution.strategy=in-process/kotlin.compiler.execution.strategy=daemon/g' gradle.properties || true
+        echo "org.gradle.jvmargs=-Xmx4g -Dfile.encoding=UTF-8 -Djava.awt.headless=true" >> gradle.properties
+        echo "kotlin.compiler.execution.strategy=daemon" >> gradle.properties
 
-    - name: Build with Gradle
+    # Build Android APK
+    - name: Build APK with Gradle
       run: |
         GRADLEW_PATH=$(find . -name "gradlew" | head -n 1)
         if [ -n "$GRADLEW_PATH" ]; then
           DIR_PATH=$(dirname "$GRADLEW_PATH")
           cd "$DIR_PATH"
           chmod +x ./gradlew
-          ./gradlew assembleDebug
+          ./gradlew assembleDebug --stacktrace -Dkotlin.compiler.execution.strategy=daemon -Djava.awt.headless=true
         else
           BUILD_GRADLE_PATH=$(find . -name "build.gradle" -o -name "build.gradle.kts" | head -n 1)
           DIR_PATH=$(dirname "$BUILD_GRADLE_PATH")
           cd "$DIR_PATH"
-          gradle assembleDebug
+          gradle assembleDebug --stacktrace -Dkotlin.compiler.execution.strategy=daemon -Djava.awt.headless=true
         fi
       env:
         GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        GRADLE_OPTS: "-Dkotlin.compiler.execution.strategy=daemon -Djava.awt.headless=true"
 
     - name: Find and Rename APK
       run: |
