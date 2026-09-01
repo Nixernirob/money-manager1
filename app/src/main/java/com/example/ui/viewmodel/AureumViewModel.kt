@@ -67,6 +67,18 @@ class AureumViewModel(application: Application) : AndroidViewModel(application) 
     // Export confirmation message state
     val exportMessage = MutableStateFlow<String?>(null)
 
+    // First-time tutorial walkthrough state
+    val showFirstTimeTutorial = MutableStateFlow(!prefs.getBoolean("is_first_time_tutorial_completed_v2", false))
+
+    fun completeTutorial() {
+        showFirstTimeTutorial.value = false
+        prefs.edit().putBoolean("is_first_time_tutorial_completed_v2", true).apply()
+    }
+
+    fun restartTutorial() {
+        showFirstTimeTutorial.value = true
+    }
+
     // Transaction being edited (null if adding a new transaction)
     val editingTransaction = MutableStateFlow<com.example.data.db.Transaction?>(null)
 
@@ -121,11 +133,47 @@ class AureumViewModel(application: Application) : AndroidViewModel(application) 
             initialValue = emptyList()
         )
 
-        // Seed initial mock accounts and loans if database is empty on launch
+        // Reset/Seed default vaults to only Cash and Credit Card
         viewModelScope.launch {
-            allAccounts.first { true } // wait for database check
-            repository.allAccounts.take(1).collect { accountsList ->
-                if (accountsList.isEmpty()) {
+            if (!prefs.getBoolean("v2_vault_cleanup_done_v2", false)) {
+                // Remove old template placeholder vaults if present
+                val current = repository.allAccounts.first()
+                val oldNames = setOf("Aureum Vault", "High-Yield Reserve", "Infinite Metal Card", "Aureum Main Vault")
+                current.filter { it.name in oldNames }.forEach {
+                    repository.deleteAccount(it)
+                }
+                val remaining = repository.allAccounts.first()
+                if (remaining.isEmpty()) {
+                    seedDefaultAureumData()
+                } else {
+                    if (remaining.none { it.name.equals("Cash", ignoreCase = true) }) {
+                        repository.insertAccount(
+                            Account(
+                                name = "Cash",
+                                balance = 5000.0,
+                                type = "CASH",
+                                iconName = "payments",
+                                tintHex = "#10B981"
+                            )
+                        )
+                    }
+                    if (remaining.none { it.name.equals("Credit Card", ignoreCase = true) }) {
+                        repository.insertAccount(
+                            Account(
+                                name = "Credit Card",
+                                balance = 0.0,
+                                type = "CARD",
+                                creditLimit = 50000.0,
+                                iconName = "credit_card",
+                                tintHex = "#3B82F6"
+                            )
+                        )
+                    }
+                }
+                prefs.edit().putBoolean("v2_vault_cleanup_done_v2", true).apply()
+            } else {
+                val current = repository.allAccounts.first()
+                if (current.isEmpty()) {
                     seedDefaultAureumData()
                 }
             }
@@ -140,44 +188,28 @@ class AureumViewModel(application: Application) : AndroidViewModel(application) 
                 }
             }
         }
-
-        // Trigger one-time v1.11 data reset for development
-        if (!prefs.getBoolean("v111_data_reset_done_v111", false)) {
-            viewModelScope.launch {
-                repository.clearTransactions()
-                prefs.edit().putBoolean("v111_data_reset_done_v111", true).apply()
-            }
-        }
     }
 
     private suspend fun seedDefaultAureumData() {
-        // Create premium default accounts
-        val vault = Account(
-            name = "Aureum Vault",
-            balance = 124500.0,
-            type = "ACCOUNTS",
-            iconName = "account_balance",
-            tintHex = "#c1c5dc" // light purple
-        )
-        val reserve = Account(
-            name = "High-Yield Reserve",
-            balance = 85000.0,
+        // Create only Cash and Credit Card as requested
+        val cashVault = Account(
+            name = "Cash",
+            balance = 5000.0,
             type = "CASH",
-            iconName = "savings",
-            tintHex = "#bbc4f2" // royal accent
+            iconName = "payments",
+            tintHex = "#10B981" // Emerald Green
         )
-        val metalCard = Account(
-            name = "Infinite Metal Card",
-            balance = 12450.0,
+        val creditCardVault = Account(
+            name = "Credit Card",
+            balance = 0.0,
             type = "CARD",
             creditLimit = 50000.0,
             iconName = "credit_card",
-            tintHex = "#bdc5e7" // secondary premium
+            tintHex = "#3B82F6" // Royal Blue
         )
 
-        repository.insertAccount(vault)
-        repository.insertAccount(reserve)
-        repository.insertAccount(metalCard)
+        repository.insertAccount(cashVault)
+        repository.insertAccount(creditCardVault)
 
         // Seed structured loans (Formal EMI + Soft friends loans)
         val now = System.currentTimeMillis()

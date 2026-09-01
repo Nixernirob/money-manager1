@@ -93,6 +93,34 @@ private val MidnightSecondary: Color
 private val MidnightTertiary: Color
     @Composable get() = if (MaterialTheme.colorScheme.background.luminance() < 0.5f) Color(0xFFBBC4F2) else Color(0xFFD1E1FF)
 
+val vaultPresetColors = listOf(
+    "#10B981" to "Emerald",
+    "#3B82F6" to "Royal Blue",
+    "#F59E0B" to "Amber",
+    "#EF4444" to "Crimson",
+    "#8B5CF6" to "Purple",
+    "#06B6D4" to "Cyan",
+    "#EC4899" to "Pink",
+    "#1E2430" to "Obsidian",
+    "#6366F1" to "Indigo",
+    "#B0FF27" to "Neon Lime"
+)
+
+fun getVaultGradientColor(tintHex: String): List<Color> {
+    return try {
+        val base = Color(android.graphics.Color.parseColor(tintHex))
+        val dark = Color(
+            red = (base.red * 0.45f).coerceIn(0f, 1f),
+            green = (base.green * 0.45f).coerceIn(0f, 1f),
+            blue = (base.blue * 0.45f).coerceIn(0f, 1f),
+            alpha = 1f
+        )
+        listOf(base, dark)
+    } catch (e: Exception) {
+        listOf(Color(0xFF1E2430), Color(0xFF11141A))
+    }
+}
+
 private data class VaultCardModel(
     val id: Int,
     val name: String,
@@ -123,6 +151,22 @@ fun DashboardScreen(
     val softLoanProfiles by viewModel.allSoftLoanProfiles.collectAsState()
 
     var selectedDetailVault by remember { mutableStateOf<Account?>(null) }
+    var showAddVaultDialog by remember { mutableStateOf(false) }
+    var showEditVaultDialog by remember { mutableStateOf(false) }
+    var editingVaultAccount by remember { mutableStateOf<Account?>(null) }
+
+    var vaultNameInput by remember { mutableStateOf("") }
+    var vaultBalanceInput by remember { mutableStateOf("") }
+    var vaultCreditLimitInput by remember { mutableStateOf("") }
+    var vaultTypeInput by remember { mutableStateOf("CASH") }
+    var vaultColorInput by remember { mutableStateOf("#10B981") }
+
+    var editVaultName by remember { mutableStateOf("") }
+    var editVaultBalance by remember { mutableStateOf("") }
+    var editVaultCreditLimit by remember { mutableStateOf("") }
+    var editVaultType by remember { mutableStateOf("CASH") }
+    var editVaultColor by remember { mutableStateOf("#10B981") }
+
     val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
 
     // Calculate Soft Loan Payable & Receivable across all profiles
@@ -147,7 +191,7 @@ fun DashboardScreen(
 
     // Calculate total net worth incorporating Formal & Soft Loans
     val accountsNetWorth = accounts.sumOf { 
-        if (it.type == "CREDIT") -it.balance else it.balance 
+        if (it.type == "CREDIT" || it.type == "CARD") -it.balance else it.balance 
     }
     val formalLentLoans = loans.filter { it.type == "FORMAL" && it.direction == "LENT" }.sumOf { it.outstandingAmount }
     val formalBorrowedLoans = loans.filter { it.type == "FORMAL" && it.direction == "BORROWED" }.sumOf { it.outstandingAmount }
@@ -163,59 +207,21 @@ fun DashboardScreen(
             listOf(
                 VaultCardModel(
                     id = -1,
-                    name = "Aureum Main Vault",
-                    balance = totalNetWorth,
-                    dueAmount = if (totalSoftPayable > 0) totalSoftPayable else (formalBorrowedLoans.takeIf { it > 0 } ?: 14670.0),
-                    tag = "PRIMARY VAULT",
-                    iconName = "account_balance",
-                    gradient = listOf(NeonLimeLight, NeonLimeDark),
-                    textColor = Color.Black,
-                    subTextColor = Color(0xFF1C3A0A),
-                    buttonBg = CardBlack,
-                    buttonTextColor = Color.White,
-                    buttonLabel = "Pay now",
-                    account = null
-                ),
-                VaultCardModel(
-                    id = -2,
-                    name = "High-Yield Reserve",
-                    balance = 85000.0,
+                    name = "Cash Vault",
+                    balance = 0.0,
                     dueAmount = 0.0,
-                    tag = "CASH RESERVE",
+                    tag = "CASH VAULT",
                     iconName = "savings",
-                    gradient = listOf(Color(0xFF1E2430), Color(0xFF11141A)),
+                    gradient = getVaultGradientColor("#10B981"),
                     textColor = Color.White,
-                    subTextColor = Color(0xFF94A3B8),
-                    buttonBg = NeonLime,
-                    buttonTextColor = CardBlack,
-                    buttonLabel = "Manage",
-                    account = null
-                ),
-                VaultCardModel(
-                    id = -3,
-                    name = "Infinite Metal Card",
-                    balance = 12450.0,
-                    dueAmount = 2450.0,
-                    tag = "CREDIT FACILITY",
-                    iconName = "credit_card",
-                    gradient = listOf(Color(0xFF132D25), Color(0xFF0B1914)),
-                    textColor = Color.White,
-                    subTextColor = Color(0xFF86EFAC),
-                    buttonBg = Color(0xFF10B981),
+                    subTextColor = Color.White.copy(alpha = 0.8f),
+                    buttonBg = Color.White.copy(alpha = 0.25f),
                     buttonTextColor = Color.White,
-                    buttonLabel = "Deposit",
+                    buttonLabel = "Add",
                     account = null
                 )
             )
         } else {
-            val cardGradients = listOf(
-                listOf(NeonLimeLight, NeonLimeDark),
-                listOf(Color(0xFF1E2430), Color(0xFF11141A)),
-                listOf(Color(0xFF1A2744), Color(0xFF0F172A)),
-                listOf(Color(0xFF132D25), Color(0xFF0B1914)),
-                listOf(Color(0xFF3B1E34), Color(0xFF1F0D1B))
-            )
-
             // First card: All Wealth / Total Net Worth Hero Card
             val list = mutableListOf(
                 VaultCardModel(
@@ -230,15 +236,15 @@ fun DashboardScreen(
                     subTextColor = Color(0xFF1C3A0A),
                     buttonBg = CardBlack,
                     buttonTextColor = Color.White,
-                    buttonLabel = "Pay now",
+                    buttonLabel = "Add Tx",
                     account = null
                 )
             )
 
-            // Add each individual vault account as its own swipeable card
-            accounts.forEachIndexed { idx, acc ->
-                val grad = cardGradients[(idx + 1) % cardGradients.size]
-                val isLime = grad[0] == NeonLimeLight
+            // Add each individual vault account as its own swipeable card with its custom color gradient
+            accounts.forEach { acc ->
+                val grad = getVaultGradientColor(acc.tintHex)
+                val isLime = acc.tintHex.equals("#B0FF27", ignoreCase = true)
                 val tagStr = when (acc.type.uppercase()) {
                     "ACCOUNTS", "BANK" -> "BANK VAULT"
                     "CASH", "WALLET" -> "CASH VAULT"
@@ -250,15 +256,15 @@ fun DashboardScreen(
                         id = acc.id,
                         name = acc.name,
                         balance = acc.balance,
-                        dueAmount = 0.0,
+                        dueAmount = if (acc.type.uppercase() in listOf("CARD", "CREDIT")) acc.balance else 0.0,
                         tag = tagStr,
                         iconName = acc.iconName,
                         gradient = grad,
                         textColor = if (isLime) Color.Black else Color.White,
-                        subTextColor = if (isLime) Color(0xFF1C3A0A) else Color(0xFF94A3B8),
-                        buttonBg = if (isLime) CardBlack else NeonLime,
-                        buttonTextColor = if (isLime) Color.White else CardBlack,
-                        buttonLabel = "View",
+                        subTextColor = if (isLime) Color(0xFF1C3A0A) else Color.White.copy(alpha = 0.8f),
+                        buttonBg = if (isLime) CardBlack else Color.White.copy(alpha = 0.25f),
+                        buttonTextColor = Color.White,
+                        buttonLabel = "Edit",
                         account = acc
                     )
                 )
@@ -273,10 +279,10 @@ fun DashboardScreen(
         modifier = modifier
             .fillMaxSize()
             .padding(horizontal = 20.dp),
-        verticalArrangement = Arrangement.spacedBy(20.dp),
+        verticalArrangement = Arrangement.spacedBy(18.dp),
         contentPadding = PaddingValues(top = 8.dp, bottom = 100.dp)
     ) {
-        // 1. Top App Header Bar matching the reference design
+        // 1. Clean Top Header Bar (Removed notification bar and profile icon as requested)
         item {
             Row(
                 modifier = Modifier
@@ -285,71 +291,29 @@ fun DashboardScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Left: User Profile Avatar
+                Text(
+                    text = "Wallet",
+                    color = specs.contentPrimary,
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = (-0.5).sp
+                )
+
+                // Eye Toggle for Balance Privacy
                 Box(
                     modifier = Modifier
                         .size(38.dp)
                         .clip(CircleShape)
-                        .background(
-                            Brush.linearGradient(
-                                listOf(Color(0xFFE0E7FF), Color(0xFFC7D2FE))
-                            )
-                        )
-                        .border(1.5.dp, if (isDark) NeonLime.copy(alpha = 0.6f) else Color.White, CircleShape),
+                        .background(primaryCardBg)
+                        .border(1.dp, cardBorder, CircleShape)
+                        .clickable { viewModel.isBalanceHidden.value = !isBalanceHidden },
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(
-                        text = "JD",
-                        color = Color(0xFF3730A3),
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Bold
+                    AureumVectorIcon(
+                        name = if (isBalanceHidden) "visibility_off" else "visibility",
+                        tint = specs.contentPrimary,
+                        modifier = Modifier.size(19.dp)
                     )
-                }
-
-                // Center: Screen Title
-                Text(
-                    text = "Wallet",
-                    color = specs.contentPrimary,
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold
-                )
-
-                // Right: Notification Bell & Eye Toggle
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(36.dp)
-                            .clip(CircleShape)
-                            .background(primaryCardBg)
-                            .border(1.dp, cardBorder, CircleShape)
-                            .clickable { viewModel.isBalanceHidden.value = !isBalanceHidden },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        AureumVectorIcon(
-                            name = if (isBalanceHidden) "visibility_off" else "visibility",
-                            tint = specs.contentPrimary,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-
-                    Box(
-                        modifier = Modifier
-                            .size(36.dp)
-                            .clip(CircleShape)
-                            .background(primaryCardBg)
-                            .border(1.dp, cardBorder, CircleShape)
-                            .clickable { /* Notification tap */ },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        AureumVectorIcon(
-                            name = "bell",
-                            tint = specs.contentPrimary,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
                 }
             }
         }
@@ -360,7 +324,7 @@ fun DashboardScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clickable { viewModel.isBalanceHidden.value = !isBalanceHidden }
-                    .padding(vertical = 4.dp)
+                    .padding(vertical = 2.dp)
             ) {
                 Text(
                     text = "My Balance",
@@ -379,7 +343,26 @@ fun DashboardScreen(
             }
         }
 
-        // 3. Swipeable Vault Accounts Card Carousel (Right & Left Swipeable)
+        // 3. Vaults Header
+        item {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "VAULT ACCOUNTS",
+                    color = specs.contentSecondary,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.2.sp
+                )
+            }
+        }
+
+        // 4. Swipeable Vault Accounts Card Carousel (Right & Left Swipeable with custom colors)
         item {
             HorizontalPager(
                 state = cardPagerState,
@@ -390,13 +373,13 @@ fun DashboardScreen(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(185.dp)
+                        .height(190.dp)
                         .clip(RoundedCornerShape(24.dp))
                         .background(Brush.linearGradient(card.gradient))
                         .clickable {
                             if (card.account != null) {
                                 selectedDetailVault = card.account
-                            } else if (card.id == -1 || card.id == 0) {
+                            } else {
                                 onAddTransactionClick()
                             }
                         }
@@ -406,7 +389,7 @@ fun DashboardScreen(
                         modifier = Modifier.fillMaxSize(),
                         verticalArrangement = Arrangement.SpaceBetween
                     ) {
-                        // Top Row: Vault Icon + Vault Name & Vault Tag Badge (No Card Number)
+                        // Top Row: Vault Icon + Vault Name & Vault Tag Badge
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -418,41 +401,63 @@ fun DashboardScreen(
                             ) {
                                 Box(
                                     modifier = Modifier
-                                        .size(32.dp)
+                                        .size(34.dp)
                                         .clip(CircleShape)
-                                        .background(card.textColor.copy(alpha = 0.15f)),
+                                        .background(card.textColor.copy(alpha = 0.18f)),
                                     contentAlignment = Alignment.Center
                                 ) {
                                     AureumVectorIcon(
                                         name = card.iconName,
                                         tint = card.textColor,
-                                        modifier = Modifier.size(17.dp)
+                                        modifier = Modifier.size(18.dp)
                                     )
                                 }
-                                Text(
-                                    text = card.name,
-                                    color = card.textColor.copy(alpha = 0.95f),
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
+                                Column {
+                                    Text(
+                                        text = card.name,
+                                        color = card.textColor,
+                                        fontSize = 15.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        text = card.tag,
+                                        color = card.subTextColor,
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        letterSpacing = 0.8.sp
+                                    )
+                                }
                             }
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(card.textColor.copy(alpha = 0.15f))
-                                    .padding(horizontal = 9.dp, vertical = 4.dp)
-                            ) {
-                                Text(
-                                    text = card.tag,
-                                    color = card.textColor,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    letterSpacing = 0.6.sp
-                                )
+
+                            // If this is an actual vault account, show quick edit button on top right too
+                            if (card.account != null) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(28.dp)
+                                        .clip(CircleShape)
+                                        .background(card.textColor.copy(alpha = 0.15f))
+                                        .clickable {
+                                            val acc = card.account
+                                            editingVaultAccount = acc
+                                            editVaultName = acc.name
+                                            editVaultBalance = acc.balance.toString()
+                                            editVaultType = acc.type.uppercase()
+                                            editVaultCreditLimit = acc.creditLimit?.toString() ?: ""
+                                            editVaultColor = acc.tintHex
+                                            showEditVaultDialog = true
+                                        },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    AureumVectorIcon(
+                                        name = "edit",
+                                        tint = card.textColor,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                }
                             }
                         }
 
-                        // Bottom Row: Balance / Total Due + Action Pill Button
+                        // Bottom Row: Balance & Interactive Pill Button
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -482,7 +487,14 @@ fun DashboardScreen(
                                     .background(card.buttonBg)
                                     .clickable {
                                         if (card.account != null) {
-                                            selectedDetailVault = card.account
+                                            val acc = card.account
+                                            editingVaultAccount = acc
+                                            editVaultName = acc.name
+                                            editVaultBalance = acc.balance.toString()
+                                            editVaultType = acc.type.uppercase()
+                                            editVaultCreditLimit = acc.creditLimit?.toString() ?: ""
+                                            editVaultColor = acc.tintHex
+                                            showEditVaultDialog = true
                                         } else {
                                             onAddTransactionClick()
                                         }
@@ -695,7 +707,355 @@ fun DashboardScreen(
                     }
                 }
             },
-            confirmButton = {}
+            confirmButton = {},
+            dismissButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(
+                        onClick = {
+                            val acc = selectedDetailVault
+                            if (acc != null) {
+                                editingVaultAccount = acc
+                                editVaultName = acc.name
+                                editVaultBalance = acc.balance.toString()
+                                editVaultType = acc.type.uppercase()
+                                editVaultCreditLimit = acc.creditLimit?.toString() ?: ""
+                                editVaultColor = acc.tintHex
+                                selectedDetailVault = null
+                                showEditVaultDialog = true
+                            }
+                        }
+                    ) {
+                        Text("Edit Vault & Color", color = specs.activeContainer, fontWeight = FontWeight.Bold)
+                    }
+                    TextButton(onClick = { selectedDetailVault = null }) {
+                        Text("Close", color = specs.contentSecondary, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        )
+    }
+
+    // Add Vault Dialog with Card Color Selector on Home Screen
+    if (showAddVaultDialog) {
+        AlertDialog(
+            onDismissRequest = { showAddVaultDialog = false },
+            title = { Text("Add New Vault Account", color = specs.contentPrimary, fontWeight = FontWeight.Bold) },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    TextField(
+                        value = vaultNameInput,
+                        onValueChange = { vaultNameInput = it },
+                        label = { Text("Vault Name (e.g., Cash, Card, Bank)") },
+                        colors = TextFieldDefaults.colors(
+                            focusedTextColor = specs.contentPrimary,
+                            unfocusedTextColor = specs.contentPrimary,
+                            focusedContainerColor = specs.inactiveContainer,
+                            unfocusedContainerColor = specs.inactiveContainer
+                        ),
+                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                    )
+                    TextField(
+                        value = vaultBalanceInput,
+                        onValueChange = { vaultBalanceInput = it },
+                        label = { Text("Starting Balance") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        colors = TextFieldDefaults.colors(
+                            focusedTextColor = specs.contentPrimary,
+                            unfocusedTextColor = specs.contentPrimary,
+                            focusedContainerColor = specs.inactiveContainer,
+                            unfocusedContainerColor = specs.inactiveContainer
+                        ),
+                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                    )
+
+                    Text("VAULT TYPE", color = specs.contentSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf("CASH", "ACCOUNTS", "CARD").forEach { t ->
+                            val active = vaultTypeInput == t
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(if (active) specs.activeContainer else specs.inactiveContainer)
+                                    .border(1.dp, if (active) Color.Transparent else specs.inactiveContainerBorder, RoundedCornerShape(12.dp))
+                                    .clickable { 
+                                        vaultTypeInput = t 
+                                        if (t == "CASH" && vaultColorInput == "#10B981") vaultColorInput = "#10B981"
+                                        if (t == "CARD" && vaultColorInput == "#10B981") vaultColorInput = "#3B82F6"
+                                    }
+                                    .padding(vertical = 10.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = if (t == "ACCOUNTS") "BANK" else t,
+                                    fontSize = 11.sp,
+                                    color = if (active) specs.onActiveContainer else specs.contentPrimary,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+
+                    if (vaultTypeInput == "CARD" || vaultTypeInput == "CREDIT") {
+                        TextField(
+                            value = vaultCreditLimitInput,
+                            onValueChange = { vaultCreditLimitInput = it },
+                            label = { Text("Credit Limit") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            colors = TextFieldDefaults.colors(
+                                focusedTextColor = specs.contentPrimary,
+                                unfocusedTextColor = specs.contentPrimary,
+                                focusedContainerColor = specs.inactiveContainer,
+                                unfocusedContainerColor = specs.inactiveContainer
+                            ),
+                            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                        )
+                    }
+
+                    // Card Color Picker
+                    Text("CARD COLOR THEME", color = specs.contentSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        vaultPresetColors.forEach { (hex, name) ->
+                            val c = Color(android.graphics.Color.parseColor(hex))
+                            val isSelected = vaultColorInput.equals(hex, ignoreCase = true)
+                            Box(
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .clip(CircleShape)
+                                    .background(c)
+                                    .border(
+                                        width = if (isSelected) 3.dp else 1.dp,
+                                        color = if (isSelected) specs.contentPrimary else Color.White.copy(alpha = 0.3f),
+                                        shape = CircleShape
+                                    )
+                                    .clickable { vaultColorInput = hex },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (isSelected) {
+                                    AureumVectorIcon(
+                                        name = "check",
+                                        tint = if (hex == "#B0FF27") Color.Black else Color.White,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (vaultNameInput.isNotBlank()) {
+                            val limit = vaultCreditLimitInput.toDoubleOrNull()
+                            viewModel.addAccount(
+                                name = vaultNameInput.trim(),
+                                initialBalance = vaultBalanceInput.toDoubleOrNull() ?: 0.0,
+                                type = vaultTypeInput,
+                                creditLimit = limit,
+                                tintHex = vaultColorInput
+                            )
+                            vaultNameInput = ""
+                            vaultBalanceInput = ""
+                            vaultCreditLimitInput = ""
+                            showAddVaultDialog = false
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = specs.activeContainer),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("Add Vault", color = specs.onActiveContainer, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAddVaultDialog = false }) {
+                    Text("Cancel", color = specs.contentSecondary, fontWeight = FontWeight.Bold)
+                }
+            }
+        )
+    }
+
+    // Edit Vault Dialog with Card Color Selector on Home Screen
+    if (showEditVaultDialog && editingVaultAccount != null) {
+        val targetAcc = editingVaultAccount!!
+        AlertDialog(
+            onDismissRequest = { 
+                showEditVaultDialog = false 
+                editingVaultAccount = null
+            },
+            title = { Text("Edit Vault & Card Color", color = specs.contentPrimary, fontWeight = FontWeight.Bold) },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    TextField(
+                        value = editVaultName,
+                        onValueChange = { editVaultName = it },
+                        label = { Text("Vault Name") },
+                        colors = TextFieldDefaults.colors(
+                            focusedTextColor = specs.contentPrimary,
+                            unfocusedTextColor = specs.contentPrimary,
+                            focusedContainerColor = specs.inactiveContainer,
+                            unfocusedContainerColor = specs.inactiveContainer
+                        ),
+                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                    )
+                    TextField(
+                        value = editVaultBalance,
+                        onValueChange = { editVaultBalance = it },
+                        label = { Text("Current Balance") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        colors = TextFieldDefaults.colors(
+                            focusedTextColor = specs.contentPrimary,
+                            unfocusedTextColor = specs.contentPrimary,
+                            focusedContainerColor = specs.inactiveContainer,
+                            unfocusedContainerColor = specs.inactiveContainer
+                        ),
+                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                    )
+
+                    Text("VAULT TYPE", color = specs.contentSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf("CASH", "ACCOUNTS", "CARD").forEach { t ->
+                            val active = editVaultType == t
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(if (active) specs.activeContainer else specs.inactiveContainer)
+                                    .border(1.dp, if (active) Color.Transparent else specs.inactiveContainerBorder, RoundedCornerShape(12.dp))
+                                    .clickable { editVaultType = t }
+                                    .padding(vertical = 10.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = if (t == "ACCOUNTS") "BANK" else t,
+                                    fontSize = 11.sp,
+                                    color = if (active) specs.onActiveContainer else specs.contentPrimary,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+
+                    if (editVaultType == "CARD" || editVaultType == "CREDIT") {
+                        TextField(
+                            value = editVaultCreditLimit,
+                            onValueChange = { editVaultCreditLimit = it },
+                            label = { Text("Credit Limit") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            colors = TextFieldDefaults.colors(
+                                focusedTextColor = specs.contentPrimary,
+                                unfocusedTextColor = specs.contentPrimary,
+                                focusedContainerColor = specs.inactiveContainer,
+                                unfocusedContainerColor = specs.inactiveContainer
+                            ),
+                            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                        )
+                    }
+
+                    // Card Color Picker
+                    Text("CARD COLOR THEME", color = specs.contentSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        vaultPresetColors.forEach { (hex, name) ->
+                            val c = Color(android.graphics.Color.parseColor(hex))
+                            val isSelected = editVaultColor.equals(hex, ignoreCase = true)
+                            Box(
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .clip(CircleShape)
+                                    .background(c)
+                                    .border(
+                                        width = if (isSelected) 3.dp else 1.dp,
+                                        color = if (isSelected) specs.contentPrimary else Color.White.copy(alpha = 0.3f),
+                                        shape = CircleShape
+                                    )
+                                    .clickable { editVaultColor = hex },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (isSelected) {
+                                    AureumVectorIcon(
+                                        name = "check",
+                                        tint = if (hex == "#B0FF27") Color.Black else Color.White,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    if (accounts.size > 1) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Button(
+                            onClick = {
+                                viewModel.deleteAccount(targetAcc)
+                                showEditVaultDialog = false
+                                editingVaultAccount = null
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = ExpenseCoral.copy(alpha = 0.2f)),
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Text("DELETE THIS VAULT", color = ExpenseCoral, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val limit = editVaultCreditLimit.toDoubleOrNull()
+                        val updated = targetAcc.copy(
+                            name = editVaultName.trim(),
+                            balance = editVaultBalance.toDoubleOrNull() ?: targetAcc.balance,
+                            type = editVaultType,
+                            creditLimit = limit,
+                            tintHex = editVaultColor,
+                            iconName = when (editVaultType) {
+                                "ACCOUNTS", "BANK" -> "account_balance"
+                                "CASH" -> "savings"
+                                "CARD", "CREDIT" -> "credit_card"
+                                else -> "account_balance"
+                            }
+                        )
+                        viewModel.updateAccount(updated)
+                        showEditVaultDialog = false
+                        editingVaultAccount = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = specs.activeContainer),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("Save Changes", color = specs.onActiveContainer, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { 
+                    showEditVaultDialog = false 
+                    editingVaultAccount = null
+                }) {
+                    Text("Cancel", color = specs.contentSecondary, fontWeight = FontWeight.Bold)
+                }
+            }
         )
     }
 }
@@ -2390,6 +2750,7 @@ fun AccountsScreen(
     var balanceInput by remember { mutableStateOf("") }
     var creditLimitInput by remember { mutableStateOf("") }
     var selectedType by remember { mutableStateOf("ACCOUNTS") } // CASH, ACCOUNTS, CARD
+    var addAccountColor by remember { mutableStateOf("#10B981") }
 
     // Edit Account Dialog states
     var showEditAccountDialog by remember { mutableStateOf(false) }
@@ -2398,6 +2759,7 @@ fun AccountsScreen(
     var editAccountBalance by remember { mutableStateOf("") }
     var editAccountType by remember { mutableStateOf("ACCOUNTS") }
     var editCreditLimit by remember { mutableStateOf("") }
+    var editAccountColor by remember { mutableStateOf("#10B981") }
 
     val assetsTotal = accounts.filter { it.type != "CREDIT" && it.type != "CARD" }.sumOf { it.balance }
     val creditOutflow = accounts.filter { it.type == "CREDIT" || it.type == "CARD" }.sumOf { it.balance }
@@ -2597,6 +2959,41 @@ fun AccountsScreen(
                             )
                         )
                     }
+
+                    // Card Color Picker
+                    Text("CARD COLOR THEME", color = specs.contentSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        vaultPresetColors.forEach { (hex, name) ->
+                            val c = Color(android.graphics.Color.parseColor(hex))
+                            val isSelected = addAccountColor.equals(hex, ignoreCase = true)
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(CircleShape)
+                                    .background(c)
+                                    .border(
+                                        width = if (isSelected) 3.dp else 1.dp,
+                                        color = if (isSelected) specs.contentPrimary else Color.White.copy(alpha = 0.3f),
+                                        shape = CircleShape
+                                    )
+                                    .clickable { addAccountColor = hex },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (isSelected) {
+                                    AureumVectorIcon(
+                                        name = "check",
+                                        tint = if (hex == "#B0FF27") Color.Black else Color.White,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
             },
             confirmButton = {
@@ -2608,7 +3005,7 @@ fun AccountsScreen(
                             initialBalance = balanceInput.toDoubleOrNull() ?: 0.0,
                             type = selectedType,
                             creditLimit = limit,
-                            tintHex = "#bbc4f2"
+                            tintHex = addAccountColor
                         )
                         // Reset input fields
                         accountNameInput = ""
@@ -2705,6 +3102,41 @@ fun AccountsScreen(
                         )
                     }
 
+                    // Card Color Picker
+                    Text("CARD COLOR THEME", color = specs.contentSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        vaultPresetColors.forEach { (hex, name) ->
+                            val c = Color(android.graphics.Color.parseColor(hex))
+                            val isSelected = editAccountColor.equals(hex, ignoreCase = true)
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(CircleShape)
+                                    .background(c)
+                                    .border(
+                                        width = if (isSelected) 3.dp else 1.dp,
+                                        color = if (isSelected) specs.contentPrimary else Color.White.copy(alpha = 0.3f),
+                                        shape = CircleShape
+                                    )
+                                    .clickable { editAccountColor = hex },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (isSelected) {
+                                    AureumVectorIcon(
+                                        name = "check",
+                                        tint = if (hex == "#B0FF27") Color.Black else Color.White,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
                     Spacer(modifier = Modifier.height(8.dp))
                     
                     Button(
@@ -2735,6 +3167,7 @@ fun AccountsScreen(
                             balance = editAccountBalance.toDoubleOrNull() ?: targetAccount.balance,
                             type = editAccountType,
                             creditLimit = limit,
+                            tintHex = editAccountColor,
                             iconName = when (editAccountType) {
                                 "ACCOUNTS" -> "account_balance"
                                 "CASH" -> "savings"
@@ -4822,7 +5255,9 @@ fun NumericKeypad(onKeyPress: (String) -> Unit) {
                             .clip(RoundedCornerShape(12.dp))
                             .background(specs.inactiveContainer)
                             .border(1.dp, specs.inactiveContainerBorder, RoundedCornerShape(12.dp))
-                            .clickable { onKeyPress(char) },
+                            .hapticClickable(
+                                style = if (char == "⌫") HapticStyle.HEAVY else HapticStyle.LIGHT
+                            ) { onKeyPress(char) },
                         contentAlignment = Alignment.Center
                     ) {
                         Text(char, color = specs.contentPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
@@ -5194,6 +5629,28 @@ fun SettingsScreen(
                     colors = ButtonDefaults.buttonColors(containerColor = ExpenseCoral)
                 ) {
                     Text("Delete", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+
+        // App Version & Status Card
+        GlassCard(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("Aureum Wallet", color = specs.contentPrimary, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    Text("Version 2.0.0 (Build 3) • 100% Offline", color = specs.contentSecondary, fontSize = 11.sp)
+                }
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(specs.activeContainer.copy(alpha = 0.15f))
+                        .padding(horizontal = 10.dp, vertical = 4.dp)
+                ) {
+                    Text("v2.0.0", color = specs.activeContainer, fontWeight = FontWeight.Bold, fontSize = 11.sp)
                 }
             }
         }

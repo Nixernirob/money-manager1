@@ -228,7 +228,7 @@ fun AureumVectorIcon(
                 }
                 drawPath(path = bodyPath, color = tint, style = Stroke(width = strokeWidth))
             }
-            "insights", "stats" -> {
+            "insights", "stats", "pie_chart", "chart", "analytics" -> {
                 // Polyline chart
                 drawLine(color = tint, start = Offset(w * 0.15f, h * 0.72f), end = Offset(w * 0.38f, h * 0.42f), strokeWidth = strokeWidth)
                 drawLine(color = tint, start = Offset(w * 0.38f, h * 0.42f), end = Offset(w * 0.61f, h * 0.58f), strokeWidth = strokeWidth)
