@@ -44,14 +44,26 @@ class AureumViewModel(application: Application) : AndroidViewModel(application) 
     val isLocked = MutableStateFlow(false) // Whether App is CURRENTLY locked
     val pinPromptMode = MutableStateFlow(false) // Pin entering mode
     val pinInput = MutableStateFlow("")
-    val correctPin = MutableStateFlow(prefs.getString("correct_pin", "1234") ?: "1234") // Custom PIN saved
-    val isBalanceHidden = MutableStateFlow(false)
+    val correctPin = MutableStateFlow(prefs.getString("correct_pin", "") ?: "") // Custom PIN saved (no default PIN)
+    val isBalanceHidden = MutableStateFlow(prefs.getBoolean("is_balance_hidden", false))
     val hiddenAccounts = MutableStateFlow<Set<Int>>(emptySet())
     val secureModeEnabled = MutableStateFlow(false) // Anti-screenshot toggle
 
     // Custom App Configs
     val selectedCurrency = MutableStateFlow("৳") // default (BDT) or "$"
-    val isDarkTheme = MutableStateFlow(false) // Professional Polish light theme by default
+    val isDarkTheme = MutableStateFlow(prefs.getBoolean("is_dark_theme", false)) // Default is light theme, toggleable
+
+    fun toggleTheme() {
+        val next = !isDarkTheme.value
+        isDarkTheme.value = next
+        prefs.edit().putBoolean("is_dark_theme", next).apply()
+    }
+
+    fun toggleBalanceHidden() {
+        val next = !isBalanceHidden.value
+        isBalanceHidden.value = next
+        prefs.edit().putBoolean("is_balance_hidden", next).apply()
+    }
 
     // Transaction List Filters (Daily / Calendar heat map / Monthly breakdown etc)
     val transactionFilterType = MutableStateFlow("ALL") // "ALL", "EXPENSES", "INCOMES"
@@ -133,24 +145,45 @@ class AureumViewModel(application: Application) : AndroidViewModel(application) 
             initialValue = emptyList()
         )
 
-        // Reset/Seed default vaults to only Cash and Credit Card
+        // Reset/Seed default vaults to only Cash and Credit Card with 0 balance and NO mock loans/tx
         viewModelScope.launch {
-            if (!prefs.getBoolean("v2_vault_cleanup_done_v2", false)) {
+            if (!prefs.getBoolean("v3_zero_default_clean_done_v3", false)) {
                 // Remove old template placeholder vaults if present
                 val current = repository.allAccounts.first()
                 val oldNames = setOf("Aureum Vault", "High-Yield Reserve", "Infinite Metal Card", "Aureum Main Vault")
                 current.filter { it.name in oldNames }.forEach {
                     repository.deleteAccount(it)
                 }
+
+                // Clean old dummy loans
+                val dummyLoanNames = setOf("Mortgage Facility", "Auto High Loan", "Sarah Rogers", "Mike Johnson")
+                val currentLoans = repository.allLoans.first()
+                currentLoans.filter { it.borrowerOrLender in dummyLoanNames }.forEach {
+                    repository.deleteLoanById(it.id)
+                }
+
+                // If PIN is default "1234", clear it
+                if (prefs.getString("correct_pin", "") == "1234") {
+                    prefs.edit().remove("correct_pin").putBoolean("pin_guard_enabled", false).apply()
+                    correctPin.value = ""
+                    isPinGuardEnabled.value = false
+                }
+
                 val remaining = repository.allAccounts.first()
                 if (remaining.isEmpty()) {
                     seedDefaultAureumData()
                 } else {
+                    // Ensure cash balance is 0.0 if default 5000.0 was present
+                    remaining.forEach { acc ->
+                        if (acc.name.equals("Cash", ignoreCase = true) && acc.balance == 5000.0) {
+                            repository.updateAccount(acc.copy(balance = 0.0))
+                        }
+                    }
                     if (remaining.none { it.name.equals("Cash", ignoreCase = true) }) {
                         repository.insertAccount(
                             Account(
                                 name = "Cash",
-                                balance = 5000.0,
+                                balance = 0.0,
                                 type = "CASH",
                                 iconName = "payments",
                                 tintHex = "#10B981"
@@ -163,14 +196,14 @@ class AureumViewModel(application: Application) : AndroidViewModel(application) 
                                 name = "Credit Card",
                                 balance = 0.0,
                                 type = "CARD",
-                                creditLimit = 50000.0,
+                                creditLimit = 0.0,
                                 iconName = "credit_card",
                                 tintHex = "#3B82F6"
                             )
                         )
                     }
                 }
-                prefs.edit().putBoolean("v2_vault_cleanup_done_v2", true).apply()
+                prefs.edit().putBoolean("v3_zero_default_clean_done_v3", true).apply()
             } else {
                 val current = repository.allAccounts.first()
                 if (current.isEmpty()) {
@@ -191,10 +224,10 @@ class AureumViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private suspend fun seedDefaultAureumData() {
-        // Create only Cash and Credit Card as requested
+        // Create initial Cash and Credit Card with 0 balances
         val cashVault = Account(
             name = "Cash",
-            balance = 5000.0,
+            balance = 0.0,
             type = "CASH",
             iconName = "payments",
             tintHex = "#10B981" // Emerald Green
@@ -203,66 +236,14 @@ class AureumViewModel(application: Application) : AndroidViewModel(application) 
             name = "Credit Card",
             balance = 0.0,
             type = "CARD",
-            creditLimit = 50000.0,
+            creditLimit = 0.0,
             iconName = "credit_card",
             tintHex = "#3B82F6" // Royal Blue
         )
 
         repository.insertAccount(cashVault)
         repository.insertAccount(creditCardVault)
-
-        // Seed structured loans (Formal EMI + Soft friends loans)
-        val now = System.currentTimeMillis()
-        val overdueDate = now - 3 * 24 * 60 * 60 * 1000 // 3 days overdue
-        val autoLoanFutureDate = now + 10 * 24 * 60 * 60 * 1000 // 10 days out
-
-        repository.insertLoan(
-            Loan(
-                type = "FORMAL",
-                borrowerOrLender = "Mortgage Facility",
-                loanAmount = 14250.0,
-                interestRate = 4.2,
-                outstandingAmount = 14250.0,
-                nextDueDate = overdueDate,
-                emiAmount = 2450.0,
-                direction = "BORROWED"
-            )
-        )
-
-        repository.insertLoan(
-            Loan(
-                type = "FORMAL",
-                borrowerOrLender = "Auto High Loan",
-                loanAmount = 5200.0,
-                interestRate = 3.5,
-                outstandingAmount = 420.0,
-                nextDueDate = autoLoanFutureDate,
-                emiAmount = 420.0,
-                direction = "BORROWED"
-            )
-        )
-
-        repository.insertLoan(
-            Loan(
-                type = "SOFT",
-                borrowerOrLender = "Sarah Rogers",
-                loanAmount = 120.0,
-                outstandingAmount = 120.0,
-                nextDueDate = now,
-                direction = "LENT"
-            )
-        )
-
-        repository.insertLoan(
-            Loan(
-                type = "SOFT",
-                borrowerOrLender = "Mike Johnson",
-                loanAmount = 850.0,
-                outstandingAmount = 850.0,
-                nextDueDate = now,
-                direction = "BORROWED"
-            )
-        )
+        // No default loans and no transactions seeded (fresh zero slate)
     }
 
     // --- Transactions Insertion Operations ---
@@ -677,15 +658,21 @@ class AureumViewModel(application: Application) : AndroidViewModel(application) 
         if (newPin.length == 4) {
             prefs.edit().putString("correct_pin", newPin).apply()
             correctPin.value = newPin
+            prefs.edit().putBoolean("pin_guard_enabled", true).apply()
+            isPinGuardEnabled.value = true
         }
+    }
+
+    fun removePin() {
+        prefs.edit().remove("correct_pin").apply()
+        prefs.edit().putBoolean("pin_guard_enabled", false).apply()
+        correctPin.value = ""
+        isPinGuardEnabled.value = false
     }
 
     fun setPinGuardEnabled(enabled: Boolean) {
         prefs.edit().putBoolean("pin_guard_enabled", enabled).apply()
         isPinGuardEnabled.value = enabled
-        if (enabled && (correctPin.value.isBlank() || correctPin.value == "1234")) {
-            saveNewPin("1234")
-        }
     }
 
     fun setBiometricEnabled(enabled: Boolean) {

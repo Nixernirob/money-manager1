@@ -43,6 +43,14 @@ import com.example.data.db.Transaction
 import com.example.data.db.Category
 import com.example.data.db.SoftLoanProfile
 import com.example.data.db.FormalLender
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Fill
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Size
 import com.example.ui.components.*
 import com.example.ui.theme.*
 import com.example.ui.viewmodel.AureumViewModel
@@ -299,20 +307,21 @@ fun DashboardScreen(
                     letterSpacing = (-0.5).sp
                 )
 
-                // Eye Toggle for Balance Privacy
+                // Theme Toggle for Light / Dark Mode
+                val isDarkTheme by viewModel.isDarkTheme.collectAsState()
                 Box(
                     modifier = Modifier
                         .size(38.dp)
                         .clip(CircleShape)
                         .background(primaryCardBg)
                         .border(1.dp, cardBorder, CircleShape)
-                        .clickable { viewModel.isBalanceHidden.value = !isBalanceHidden },
+                        .clickable { viewModel.toggleTheme() },
                     contentAlignment = Alignment.Center
                 ) {
                     AureumVectorIcon(
-                        name = if (isBalanceHidden) "visibility_off" else "visibility",
+                        name = if (isDarkTheme) "light_mode" else "dark_mode",
                         tint = specs.contentPrimary,
-                        modifier = Modifier.size(19.dp)
+                        modifier = Modifier.size(20.dp)
                     )
                 }
             }
@@ -429,8 +438,24 @@ fun DashboardScreen(
                                 }
                             }
 
-                            // If this is an actual vault account, show quick edit button on top right too
-                            if (card.account != null) {
+                            // If this is the Total Net Worth card, show the Hide Balance eye toggle
+                            if (card.account == null) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(32.dp)
+                                        .clip(CircleShape)
+                                        .background(card.textColor.copy(alpha = 0.15f))
+                                        .clickable { viewModel.toggleBalanceHidden() },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    AureumVectorIcon(
+                                        name = if (isBalanceHidden) "visibility_off" else "visibility",
+                                        tint = card.textColor,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            } else {
+                                // If this is an actual vault account, show quick edit button on top right too
                                 Box(
                                     modifier = Modifier
                                         .size(28.dp)
@@ -2295,111 +2320,397 @@ fun ExpenseDistributionPieChart(transactions: List<Transaction>, viewModel: Aure
 }
 
 // -------------------------------------------------------------
-// ANALYTICS / STATS SCREEN (Growth & Watch List)
+// ANALYTICS / STATS SCREEN (D3 & Recharts Visualizations)
 // -------------------------------------------------------------
+
+enum class AnalyticsTimeHorizon(val label: String, val days: Int) {
+    D7("7D", 7),
+    D30("30D", 30),
+    M3("3M", 90),
+    M6("6M", 180),
+    Y1("1Y", 365),
+    ALL("ALL", 3650)
+}
+
+data class TimeSeriesDataPoint(
+    val dateLabel: String,
+    val fullDate: String,
+    val timestamp: Long,
+    val expense: Double,
+    val income: Double,
+    val net: Double
+)
+
+data class CategorySpendMetric(
+    val category: String,
+    val amount: Double,
+    val percentage: Float,
+    val count: Int,
+    val color: Color
+)
+
 @Composable
 fun StatsScreen(
     viewModel: AureumViewModel,
     modifier: Modifier = Modifier
 ) {
-    val transactions by viewModel.allTransactions.collectAsState()
+    val allTransactions by viewModel.allTransactions.collectAsState()
+    val accounts by viewModel.allAccounts.collectAsState()
     val currency by viewModel.selectedCurrency.collectAsState()
     val isBalanceHidden by viewModel.isBalanceHidden.collectAsState()
 
-    val totalExpenses = transactions.filter { it.type == "EXPENSE" }.sumOf { it.amount }
-    val totalIncomes = transactions.filter { it.type == "INCOME" }.sumOf { it.amount }
+    var selectedHorizon by remember { mutableStateOf(AnalyticsTimeHorizon.D30) }
+    var activeChartType by remember { mutableStateOf("AREA") } // AREA vs BARS
     val specs = AureumThemeStyles.specs
     val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
+    val haptics = rememberAppHaptics()
 
     val primaryCardBg = if (isDark) SurfaceContainer else Color.White
     val cardBorder = if (isDark) Color.White.copy(alpha = 0.08f) else Color(0xFFEFF1F5)
 
-    // Map spend distributions
-    val categoriesSpend = remember(transactions) {
-        val map = mutableMapOf<String, Double>()
-        transactions.filter { it.type == "EXPENSE" }.forEach {
-            map[it.category] = (map[it.category] ?: 0.0) + it.amount
+    // Palette of vibrant chart colors
+    val chartPalette = listOf(
+        Color(0xFF10B981), // Emerald
+        Color(0xFF3B82F6), // Blue
+        Color(0xFFF59E0B), // Amber
+        Color(0xFFEF4444), // Red
+        Color(0xFF8B5CF6), // Purple
+        Color(0xFFEC4899), // Pink
+        Color(0xFF06B6D4), // Cyan
+        Color(0xFF84CC16), // Lime
+        Color(0xFF6366F1), // Indigo
+        Color(0xFFF97316)  // Orange
+    )
+
+    // Filter transactions based on selected horizon
+    val filteredTransactions = remember(allTransactions, selectedHorizon) {
+        val cutoff = if (selectedHorizon == AnalyticsTimeHorizon.ALL) 0L
+        else System.currentTimeMillis() - (selectedHorizon.days.toLong() * 24L * 60L * 60L * 1000L)
+        allTransactions.filter { it.timestamp >= cutoff }
+    }
+
+    val periodExpenses = remember(filteredTransactions) {
+        filteredTransactions.filter { it.type == "EXPENSE" }.sumOf { it.amount }
+    }
+    val periodIncomes = remember(filteredTransactions) {
+        filteredTransactions.filter { it.type == "INCOME" }.sumOf { it.amount }
+    }
+    val netCashFlow = periodIncomes - periodExpenses
+    val savingsRate = if (periodIncomes > 0) ((netCashFlow / periodIncomes) * 100.0).coerceIn(-100.0, 100.0) else 0.0
+
+    // Group transactions into chronological TimeSeriesDataPoints
+    val timeSeriesPoints = remember(filteredTransactions, selectedHorizon) {
+        val sdfLabel = when (selectedHorizon) {
+            AnalyticsTimeHorizon.D7 -> SimpleDateFormat("EEE", Locale.getDefault())
+            AnalyticsTimeHorizon.D30 -> SimpleDateFormat("d MMM", Locale.getDefault())
+            AnalyticsTimeHorizon.M3, AnalyticsTimeHorizon.M6 -> SimpleDateFormat("MMM d", Locale.getDefault())
+            AnalyticsTimeHorizon.Y1, AnalyticsTimeHorizon.ALL -> SimpleDateFormat("MMM yyyy", Locale.getDefault())
         }
-        val sortedList = map.toList().sortedByDescending { it.second }.take(3)
-        val colors = listOf(ChequingBlue, SavingsGreen, CryptoPink)
-        
-        sortedList.mapIndexed { idx, pair ->
-            PieSegment(category = pair.first, value = pair.second, color = colors.getOrElse(idx) { ChequingBlue })
+        val sdfFull = SimpleDateFormat("MMM dd, yyyy", Locale.getDefault())
+
+        if (filteredTransactions.isEmpty()) {
+            val points = mutableListOf<TimeSeriesDataPoint>()
+            val steps = 7
+            for (i in steps - 1 downTo 0) {
+                val c = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -i) }
+                points.add(
+                    TimeSeriesDataPoint(
+                        dateLabel = sdfLabel.format(c.time),
+                        fullDate = sdfFull.format(c.time),
+                        timestamp = c.timeInMillis,
+                        expense = 0.0,
+                        income = 0.0,
+                        net = 0.0
+                    )
+                )
+            }
+            points
+        } else {
+            val numBuckets = when (selectedHorizon) {
+                AnalyticsTimeHorizon.D7 -> 7
+                AnalyticsTimeHorizon.D30 -> 10
+                AnalyticsTimeHorizon.M3 -> 12
+                AnalyticsTimeHorizon.M6 -> 14
+                AnalyticsTimeHorizon.Y1 -> 12
+                AnalyticsTimeHorizon.ALL -> 12
+            }
+
+            val minTime = filteredTransactions.minOf { it.timestamp }
+            val maxTime = System.currentTimeMillis().coerceAtLeast(minTime + 1000)
+            val bucketSpan = (maxTime - minTime).toDouble() / numBuckets
+
+            val buckets = mutableListOf<TimeSeriesDataPoint>()
+            for (i in 0 until numBuckets) {
+                val bStart = (minTime + (i * bucketSpan)).toLong()
+                val bEnd = (minTime + ((i + 1) * bucketSpan)).toLong()
+                val bMid = (bStart + bEnd) / 2
+
+                val inBucket = filteredTransactions.filter { it.timestamp in bStart..bEnd }
+                val exp = inBucket.filter { it.type == "EXPENSE" }.sumOf { it.amount }
+                val inc = inBucket.filter { it.type == "INCOME" }.sumOf { it.amount }
+
+                buckets.add(
+                    TimeSeriesDataPoint(
+                        dateLabel = sdfLabel.format(Date(bMid)),
+                        fullDate = sdfFull.format(Date(bMid)),
+                        timestamp = bMid,
+                        expense = exp,
+                        income = inc,
+                        net = inc - exp
+                    )
+                )
+            }
+            buckets
         }
     }
 
-    val topCategory = categoriesSpend.firstOrNull()?.category ?: "None"
+    // Category Breakdown Metrics
+    val categoryMetrics = remember(filteredTransactions, chartPalette) {
+        val expenseTx = filteredTransactions.filter { it.type == "EXPENSE" }
+        val totalExp = expenseTx.sumOf { it.amount }
+        val map = expenseTx.groupBy { it.category }
 
-    val trendValues = remember(transactions) {
-        val raw = transactions.filter { it.type == "EXPENSE" }.take(7).map { it.amount.toFloat() }.reversed()
-        if (raw.isEmpty()) listOf(0f, 0f, 0f) else raw
+        map.entries.sortedByDescending { it.value.sumOf { tx -> tx.amount } }
+            .mapIndexed { idx, entry ->
+                val amount = entry.value.sumOf { it.amount }
+                val pct = if (totalExp > 0) ((amount / totalExp) * 100f).toFloat() else 0f
+                CategorySpendMetric(
+                    category = entry.key,
+                    amount = amount,
+                    percentage = pct,
+                    count = entry.value.size,
+                    color = chartPalette[idx % chartPalette.size]
+                )
+            }
+    }
+
+    // Spending Diagnostics (D3 Pattern Insights)
+    val averageDailyExpense = remember(filteredTransactions, selectedHorizon) {
+        val days = when (selectedHorizon) {
+            AnalyticsTimeHorizon.D7 -> 7
+            AnalyticsTimeHorizon.D30 -> 30
+            AnalyticsTimeHorizon.M3 -> 90
+            AnalyticsTimeHorizon.M6 -> 180
+            AnalyticsTimeHorizon.Y1 -> 365
+            AnalyticsTimeHorizon.ALL -> {
+                val minT = filteredTransactions.minOfOrNull { it.timestamp } ?: System.currentTimeMillis()
+                val diffDays = ((System.currentTimeMillis() - minT) / (24L * 60L * 60L * 1000L)).coerceAtLeast(1)
+                diffDays.toInt()
+            }
+        }
+        if (days > 0) periodExpenses / days else 0.0
+    }
+
+    val weekdayVsWeekendRatio = remember(filteredTransactions) {
+        val expenseTx = filteredTransactions.filter { it.type == "EXPENSE" }
+        var weekdayTotal = 0.0
+        var weekendTotal = 0.0
+        val cal = Calendar.getInstance()
+        expenseTx.forEach { tx ->
+            cal.timeInMillis = tx.timestamp
+            val dow = cal.get(Calendar.DAY_OF_WEEK)
+            if (dow == Calendar.SATURDAY || dow == Calendar.SUNDAY) {
+                weekendTotal += tx.amount
+            } else {
+                weekdayTotal += tx.amount
+            }
+        }
+        val total = weekdayTotal + weekendTotal
+        if (total > 0) {
+            Pair((weekdayTotal / total * 100).toFloat(), (weekendTotal / total * 100).toFloat())
+        } else {
+            Pair(70f, 30f)
+        }
+    }
+
+    val largestExpenses = remember(filteredTransactions) {
+        filteredTransactions.filter { it.type == "EXPENSE" }
+            .sortedByDescending { it.amount }
+            .take(4)
     }
 
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
-            .padding(horizontal = 20.dp),
-        verticalArrangement = Arrangement.spacedBy(20.dp),
+            .padding(horizontal = 18.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
         contentPadding = PaddingValues(top = 8.dp, bottom = 100.dp)
     ) {
-        // 1. Top App Header Bar
+        // 1. Header & Title
         item {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 8.dp, bottom = 4.dp),
+                    .padding(top = 6.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Left: User Profile Avatar
-                Box(
-                    modifier = Modifier
-                        .size(38.dp)
-                        .clip(CircleShape)
-                        .background(
-                            Brush.linearGradient(
-                                listOf(Color(0xFFE0E7FF), Color(0xFFC7D2FE))
-                            )
-                        )
-                        .border(1.5.dp, if (isDark) NeonLime.copy(alpha = 0.6f) else Color.White, CircleShape),
-                    contentAlignment = Alignment.Center
-                ) {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text(
-                        text = "JD",
-                        color = Color(0xFF3730A3),
-                        fontSize = 13.sp,
+                        text = "ANALYTICS & SPENDING",
+                        color = specs.contentSecondary,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.3.sp
+                    )
+                    Text(
+                        text = "Financial Intelligence",
+                        color = specs.contentPrimary,
+                        fontSize = 20.sp,
                         fontWeight = FontWeight.Bold
                     )
                 }
 
-                // Center: Screen Title
-                Text(
-                    text = "Wallet",
-                    color = specs.contentPrimary,
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold
-                )
-
-                // Right: Notification Bell
-                Box(
+                // Toggle Area / Bars Chart representation
+                Row(
                     modifier = Modifier
-                        .size(36.dp)
-                        .clip(CircleShape)
-                        .background(primaryCardBg)
-                        .border(1.dp, cardBorder, CircleShape)
-                        .clickable { /* Notification tap */ },
-                    contentAlignment = Alignment.Center
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(specs.inactiveContainer)
+                        .border(1.dp, specs.inactiveContainerBorder, RoundedCornerShape(10.dp))
+                        .padding(3.dp),
+                    horizontalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
-                    AureumVectorIcon(
-                        name = "bell",
-                        tint = specs.contentPrimary,
-                        modifier = Modifier.size(18.dp)
-                    )
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (activeChartType == "AREA") specs.activeContainer else Color.Transparent)
+                            .clickable {
+                                haptics.perform(HapticStyle.LIGHT)
+                                activeChartType = "AREA"
+                            }
+                            .padding(horizontal = 8.dp, vertical = 5.dp)
+                    ) {
+                        Text(
+                            text = "Curve",
+                            color = if (activeChartType == "AREA") specs.onActiveContainer else specs.contentSecondary,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (activeChartType == "BARS") specs.activeContainer else Color.Transparent)
+                            .clickable {
+                                haptics.perform(HapticStyle.LIGHT)
+                                activeChartType = "BARS"
+                            }
+                            .padding(horizontal = 8.dp, vertical = 5.dp)
+                    ) {
+                        Text(
+                            text = "Bars",
+                            color = if (activeChartType == "BARS") specs.onActiveContainer else specs.contentSecondary,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
             }
         }
 
-        // 2. Hero Portfolio Growth Card (Matching Right Phone UI)
+        // 2. Time Horizon Selector (Recharts Time Filter Pills)
+        item {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                AnalyticsTimeHorizon.values().forEach { horizon ->
+                    val isSelected = selectedHorizon == horizon
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(if (isSelected) specs.activeContainer else specs.inactiveContainer)
+                            .border(
+                                1.dp,
+                                if (isSelected) Color.Transparent else specs.inactiveContainerBorder,
+                                RoundedCornerShape(10.dp)
+                            )
+                            .hapticClickable(style = HapticStyle.LIGHT) {
+                                selectedHorizon = horizon
+                            }
+                            .padding(horizontal = 14.dp, vertical = 7.dp)
+                    ) {
+                        Text(
+                            text = horizon.label,
+                            color = if (isSelected) specs.onActiveContainer else specs.contentPrimary,
+                            fontSize = 12.sp,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                        )
+                    }
+                }
+            }
+        }
+
+        // 3. KPI Metrics Summary Cards (Period Net, Inflow, Outflow, Savings Rate)
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                // Outflow Metric
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(if (isDark) Color(0xFF2C1318) else Color(0xFFFFECEB))
+                        .border(1.dp, if (isDark) ExpenseCoral.copy(alpha = 0.25f) else Color(0xFFFFCDD2), RoundedCornerShape(16.dp))
+                        .padding(14.dp)
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Box(modifier = Modifier.size(7.dp).clip(CircleShape).background(ExpenseCoral))
+                            Text("Total Outflow", color = specs.contentSecondary, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
+                        }
+                        Text(
+                            text = if (isBalanceHidden) "••••" else "-$currency${String.format(Locale.getDefault(), "%,.0f", periodExpenses)}",
+                            color = ExpenseCoral,
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace
+                        )
+                        Text(
+                            text = "${filteredTransactions.count { it.type == "EXPENSE" }} transactions",
+                            color = specs.contentSecondary,
+                            fontSize = 10.sp
+                        )
+                    }
+                }
+
+                // Inflow Metric
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(if (isDark) Color(0xFF0F291E) else Color(0xFFE8F5E9))
+                        .border(1.dp, if (isDark) AssetGreen.copy(alpha = 0.25f) else Color(0xFFC8E6C9), RoundedCornerShape(16.dp))
+                        .padding(14.dp)
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Box(modifier = Modifier.size(7.dp).clip(CircleShape).background(AssetGreen))
+                            Text("Total Inflow", color = specs.contentSecondary, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
+                        }
+                        Text(
+                            text = if (isBalanceHidden) "••••" else "+$currency${String.format(Locale.getDefault(), "%,.0f", periodIncomes)}",
+                            color = AssetGreen,
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace
+                        )
+                        Text(
+                            text = "${filteredTransactions.count { it.type == "INCOME" }} transactions",
+                            color = specs.contentSecondary,
+                            fontSize = 10.sp
+                        )
+                    }
+                }
+            }
+        }
+
+        // 4. Main Recharts / D3 Chart Card (Area Curve or Multi-Bar)
         item {
             Box(
                 modifier = Modifier
@@ -2407,122 +2718,168 @@ fun StatsScreen(
                     .clip(RoundedCornerShape(20.dp))
                     .background(primaryCardBg)
                     .border(1.dp, cardBorder, RoundedCornerShape(20.dp))
-                    .padding(18.dp)
+                    .padding(16.dp)
             ) {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                    // Header Row: Trend Icon + Portfolio growth + Last 7 days
+                Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(28.dp)
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(Color(0xFFE8F5E9)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                AureumVectorIcon(
-                                    name = "stats",
-                                    tint = Color(0xFF16A34A),
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            }
+                        Column {
                             Text(
-                                text = "Portfolio growth",
-                                color = specs.contentPrimary,
-                                fontSize = 15.sp,
+                                text = if (activeChartType == "AREA") "CASH FLOW & EXPENSE TRAJECTORY" else "PERIODIC VOLUME COMPARISON",
+                                color = specs.contentSecondary,
+                                fontSize = 10.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 1.sp
+                            )
+                            Text(
+                                text = "Net: ${if (netCashFlow >= 0) "+" else ""}$currency${String.format(Locale.getDefault(), "%,.0f", netCashFlow)} (${String.format(Locale.getDefault(), "%.1f", savingsRate)}% saved)",
+                                color = if (netCashFlow >= 0) AssetGreen else ExpenseCoral,
+                                fontSize = 13.sp,
                                 fontWeight = FontWeight.Bold
                             )
                         }
 
-                        Text(
-                            text = "Last 7 days",
-                            color = specs.contentSecondary,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
-
-                    // Content Row: Total Growth on Left, 7-Day Bar Chart on Right
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.Bottom
-                    ) {
-                        // Total growth & percentage
-                        Column {
-                            Text(
-                                text = "Total growth",
-                                color = specs.contentSecondary,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Medium
-                            )
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                val growthVal = if (totalIncomes > 0) totalIncomes else 4756.67
-                                Text(
-                                    text = if (isBalanceHidden) "••••" else "$currency${String.format(Locale.getDefault(), "%,.2f", growthVal)}",
-                                    color = specs.contentPrimary,
-                                    fontSize = 24.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    letterSpacing = (-0.5).sp
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = "(+6.2%)",
-                                    color = Color(0xFF16A34A),
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
+                        // Legends
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(AssetGreen))
+                                Text("In", color = specs.contentSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(ExpenseCoral))
+                                Text("Out", color = specs.contentSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                             }
                         }
+                    }
 
-                        // 7-day mini bar chart matching reference image
-                        val sampleDays = listOf(
-                            Pair("T", -14),
-                            Pair("W", 28),
-                            Pair("T", 38),
-                            Pair("F", -18),
-                            Pair("S", 30),
-                            Pair("S", 45),
-                            Pair("M", 34)
+                    if (activeChartType == "AREA") {
+                        RechartsInteractiveAreaChart(
+                            points = timeSeriesPoints,
+                            currency = currency,
+                            specs = specs,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(210.dp)
                         )
+                    } else {
+                        RechartsBarComparisonChart(
+                            points = timeSeriesPoints,
+                            currency = currency,
+                            specs = specs,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(210.dp)
+                        )
+                    }
+                }
+            }
+        }
 
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalAlignment = Alignment.Bottom
+        // 5. Category Breakdown & Spending Distribution (Recharts Donut + Ranked List)
+        item {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(primaryCardBg)
+                    .border(1.dp, cardBorder, RoundedCornerShape(20.dp))
+                    .padding(16.dp)
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Text(
+                        text = "EXPENSE CATEGORY DISTRIBUTION",
+                        color = specs.contentSecondary,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.sp
+                    )
+
+                    if (categoryMetrics.isEmpty()) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(120.dp),
+                            contentAlignment = Alignment.Center
                         ) {
-                            sampleDays.forEach { (day, valPct) ->
-                                val isPositive = valPct >= 0
-                                val barHeight = (kotlin.math.abs(valPct) * 0.9f).coerceIn(12f, 48f)
-                                val barColor = if (isPositive) NeonLime else ExpenseCoral
+                            Text("No expense transactions in this timeframe.", color = specs.contentSecondary, fontSize = 12.sp)
+                        }
+                    } else {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            // Recharts Multi-Segment Donut Chart
+                            RechartsDonutChart(
+                                metrics = categoryMetrics,
+                                totalExpense = periodExpenses,
+                                currency = currency,
+                                modifier = Modifier.size(130.dp)
+                            )
 
-                                Column(
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .width(7.dp)
-                                            .height(barHeight.dp)
-                                            .clip(RoundedCornerShape(4.dp))
-                                            .background(barColor)
-                                    )
-                                    Text(
-                                        text = day,
-                                        color = specs.contentSecondary,
-                                        fontSize = 9.sp,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
+                            Spacer(modifier = Modifier.width(14.dp))
+
+                            // Ranked Categories List
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .heightIn(max = 160.dp)
+                                    .verticalScroll(rememberScrollState()),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                categoryMetrics.forEach { metric ->
+                                    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                            ) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(8.dp)
+                                                        .clip(CircleShape)
+                                                        .background(metric.color)
+                                                )
+                                                Text(
+                                                    text = metric.category,
+                                                    color = specs.contentPrimary,
+                                                    fontSize = 11.5.sp,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                            }
+                                            Text(
+                                                text = "$currency${String.format(Locale.getDefault(), "%,.0f", metric.amount)} (${String.format(Locale.getDefault(), "%.1f", metric.percentage)}%)",
+                                                color = specs.contentSecondary,
+                                                fontSize = 10.5.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+
+                                        // Horizontal Progress Bar
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(5.dp)
+                                                .clip(RoundedCornerShape(3.dp))
+                                                .background(specs.inactiveContainer)
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxHeight()
+                                                    .fillMaxWidth((metric.percentage / 100f).coerceIn(0.02f, 1f))
+                                                    .background(metric.color)
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -2531,189 +2888,201 @@ fun StatsScreen(
             }
         }
 
-        // 3. Watch list Section (Exact Match to Right Phone UI)
+        // 6. D3 Behavioral Spending Diagnostics & Insights Card
         item {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(primaryCardBg)
+                    .border(1.dp, cardBorder, RoundedCornerShape(20.dp))
+                    .padding(16.dp)
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(
-                        text = "Watch list",
-                        color = specs.contentPrimary,
-                        fontSize = 17.sp,
-                        fontWeight = FontWeight.Bold
+                        text = "SPENDING PATTERNS & INSIGHTS",
+                        color = specs.contentSecondary,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.sp
                     )
-                    AureumVectorIcon(
-                        name = "chevron_right",
-                        tint = specs.contentSecondary,
-                        modifier = Modifier.size(16.dp)
-                    )
-                }
 
-                // Reference watchlist assets: Bitcoin, Ethereum, Solana, USD Coin, Veritaseum
-                val watchListItems = listOf(
-                    WatchAsset("Bitcoin", "BTC", "$83,241 USD", "+$1,204.50 (+1.47%)", true, BitcoinOrange, "btc"),
-                    WatchAsset("Ethereum", "ETH", "$1,934.20 USD", "+$84.10 (+4.55%)", true, EthereumSlate, "eth"),
-                    WatchAsset("Solana", "SOL", "$128.40 USD", "-$9.32 (-6.77%)", false, SolanaPurple, "sol"),
-                    WatchAsset("USD Coin", "USDC", "$1.00 USD", "+$0.001 (+0.10%)", true, UsdcBlue, "usdc"),
-                    WatchAsset("Veritaseum", "VRI", "$11.68 USD", "+$0.03 (+9.6%)", true, VeritaseumGold, "hexagon_gear")
-                )
+                    // Grid of 2x2 diagnostic badges
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        // Daily Burn Rate
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(specs.inactiveContainer)
+                                .border(1.dp, specs.inactiveContainerBorder, RoundedCornerShape(12.dp))
+                                .padding(12.dp)
+                        ) {
+                            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                Text("Daily Burn Rate", color = specs.contentSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                Text(
+                                    text = "$currency${String.format(Locale.getDefault(), "%,.0f", averageDailyExpense)} / day",
+                                    color = specs.contentPrimary,
+                                    fontSize = 13.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+                        }
 
-                watchListItems.forEach { item ->
-                    Box(
+                        // Savings Retention
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(specs.inactiveContainer)
+                                .border(1.dp, specs.inactiveContainerBorder, RoundedCornerShape(12.dp))
+                                .padding(12.dp)
+                        ) {
+                            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                Text("Retention Rate", color = specs.contentSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                Text(
+                                    text = "${String.format(Locale.getDefault(), "%.1f", savingsRate)}%",
+                                    color = if (savingsRate >= 20.0) AssetGreen else if (savingsRate >= 0) specs.contentPrimary else ExpenseCoral,
+                                    fontSize = 13.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+                        }
+                    }
+
+                    // Weekday vs Weekend Spending Velocity
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(primaryCardBg)
-                            .border(1.dp, cardBorder, RoundedCornerShape(16.dp))
-                            .padding(horizontal = 14.dp, vertical = 13.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(specs.inactiveContainer)
+                            .border(1.dp, specs.inactiveContainerBorder, RoundedCornerShape(12.dp))
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            // Left: Badge & Name/Symbol
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(38.dp)
-                                        .clip(RoundedCornerShape(10.dp))
-                                        .background(item.color),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    AureumVectorIcon(
-                                        name = item.icon,
-                                        tint = Color.White,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                }
-                                Column {
-                                    Text(
-                                        text = item.name,
-                                        color = specs.contentPrimary,
-                                        fontSize = 15.sp,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                    Text(
-                                        text = item.symbol,
-                                        color = specs.contentSecondary,
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Medium
-                                    )
-                                }
-                            }
+                            Text("Weekday vs Weekend Spend", color = specs.contentSecondary, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
+                            Text(
+                                text = "${String.format(Locale.getDefault(), "%.0f", weekdayVsWeekendRatio.first)}% Weekdays / ${String.format(Locale.getDefault(), "%.0f", weekdayVsWeekendRatio.second)}% Weekends",
+                                color = specs.contentPrimary,
+                                fontSize = 10.5.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
 
-                            // Right: Price & Change
-                            Column(horizontalAlignment = Alignment.End) {
-                                Text(
-                                    text = item.price,
-                                    color = specs.contentPrimary,
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Text(
-                                    text = item.change,
-                                    color = if (item.isPositive) Color(0xFF16A34A) else ExpenseCoral,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
+                        // Split Progress Bar
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(6.dp)
+                                .clip(RoundedCornerShape(3.dp))
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxHeight()
+                                    .weight(weekdayVsWeekendRatio.first.coerceAtLeast(1f))
+                                    .background(Color(0xFF3B82F6))
+                            )
+                            Spacer(modifier = Modifier.width(2.dp))
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxHeight()
+                                    .weight(weekdayVsWeekendRatio.second.coerceAtLeast(1f))
+                                    .background(Color(0xFFF59E0B))
+                            )
                         }
                     }
                 }
             }
         }
 
-        // 4. Bento Inflow / Outflow Cards
+        // 7. Top Expenses Spotlight
         item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(14.dp)
-            ) {
-                val outflowBg = if (isDark) ExpenseCoral.copy(alpha = 0.05f) else Color(0xFFFFECEB)
-                val outflowBorder = if (isDark) ExpenseCoral.copy(alpha = 0.12f) else Color(0xFFFFDAD7)
-                val inflowBg = if (isDark) AssetGreen.copy(alpha = 0.05f) else Color(0xFFE8F5E9)
-                val inflowBorder = if (isDark) AssetGreen.copy(alpha = 0.12f) else Color(0xFFC8E6C9)
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text = "TOP OUTFLOW TRANSACTIONS",
+                    color = specs.contentSecondary,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.sp
+                )
 
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(outflowBg)
-                        .border(1.dp, outflowBorder, RoundedCornerShape(16.dp))
-                        .padding(14.dp)
-                ) {
-                    Column {
-                        Text("Total Outflow", color = specs.contentSecondary, fontSize = 11.sp, fontWeight = FontWeight.Medium)
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            "$currency${String.format(Locale.getDefault(), "%,.0f", totalExpenses)}",
-                            color = ExpenseCoral,
-                            fontSize = 20.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                }
-
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(inflowBg)
-                        .border(1.dp, inflowBorder, RoundedCornerShape(16.dp))
-                        .padding(14.dp)
-                ) {
-                    Column {
-                        Text("Total Inputs", color = specs.contentSecondary, fontSize = 11.sp, fontWeight = FontWeight.Medium)
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            "$currency${String.format(Locale.getDefault(), "%,.0f", totalIncomes)}",
-                            color = if (isDark) AssetGreen else Color(0xFF2E7D32),
-                            fontSize = 20.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                }
-            }
-        }
-
-        // 5. Category Breakdown Donut Card
-        item {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(primaryCardBg)
-                    .border(1.dp, cardBorder, RoundedCornerShape(16.dp))
-                    .padding(16.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    DonutChart(
-                        segments = categoriesSpend,
-                        modifier = Modifier.size(110.dp),
-                        centerTextLabel = "TOP",
-                        centerTextVal = topCategory
-                    )
-
-                    Column(
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.padding(start = 16.dp)
+                if (largestExpenses.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(primaryCardBg)
+                            .border(1.dp, cardBorder, RoundedCornerShape(16.dp))
+                            .padding(24.dp),
+                        contentAlignment = Alignment.Center
                     ) {
-                        Text("SPEND BREAKDOWN", color = specs.contentPrimary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                        categoriesSpend.forEach { seg ->
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(seg.color))
-                                Text("${seg.category}: $currency${seg.value.toInt()}", color = specs.contentSecondary, fontSize = 11.sp)
+                        Text("No expense entries found in this range.", color = specs.contentSecondary, fontSize = 12.sp)
+                    }
+                } else {
+                    val sdfTx = SimpleDateFormat("MMM d, yyyy", Locale.getDefault())
+                    largestExpenses.forEach { tx ->
+                        val accName = accounts.firstOrNull { it.id == tx.accountId }?.name ?: "Vault"
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(primaryCardBg)
+                                .border(1.dp, cardBorder, RoundedCornerShape(14.dp))
+                                .padding(12.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(36.dp)
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .background(ExpenseCoral.copy(alpha = 0.15f)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        AureumVectorIcon(name = "shopping", tint = ExpenseCoral, modifier = Modifier.size(18.dp))
+                                    }
+
+                                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                        Text(
+                                            text = tx.note.ifBlank { tx.category },
+                                            color = specs.contentPrimary,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 13.sp,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Text(
+                                            text = "$accName • ${sdfTx.format(Date(tx.timestamp))}",
+                                            color = specs.contentSecondary,
+                                            fontSize = 10.5.sp
+                                        )
+                                    }
+                                }
+
+                                Text(
+                                    text = "-$currency${String.format(Locale.getDefault(), "%,.2f", tx.amount)}",
+                                    color = ExpenseCoral,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp,
+                                    fontFamily = FontFamily.Monospace
+                                )
                             }
                         }
                     }
@@ -2723,15 +3092,391 @@ fun StatsScreen(
     }
 }
 
-private data class WatchAsset(
-    val name: String,
-    val symbol: String,
-    val price: String,
-    val change: String,
-    val isPositive: Boolean,
-    val color: Color,
-    val icon: String
-)
+// -------------------------------------------------------------
+// RECHARTS INTERACTIVE AREA CHART (Smooth Splines & Touch Scrub)
+// -------------------------------------------------------------
+@Composable
+fun RechartsInteractiveAreaChart(
+    points: List<TimeSeriesDataPoint>,
+    currency: String,
+    specs: AureumStyleSpecs,
+    modifier: Modifier = Modifier
+) {
+    var touchedIndex by remember { mutableStateOf<Int?>(null) }
+    val maxVal = remember(points) {
+        val maxPoint = points.maxOfOrNull { maxOf(it.expense, it.income) } ?: 100.0
+        if (maxPoint <= 0.0) 100.0 else maxPoint * 1.15
+    }
+
+    var animProgress by remember { mutableStateOf(0f) }
+    LaunchedEffect(points) {
+        animProgress = 0f
+        androidx.compose.animation.core.animate(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = tween(durationMillis = 850, easing = FastOutSlowInEasing)
+        ) { value, _ ->
+            animProgress = value
+        }
+    }
+
+    val isDark = specs.isDark
+
+    Box(
+        modifier = modifier
+            .pointerInput(points) {
+                detectDragGestures(
+                    onDragStart = { offset ->
+                        val w = size.width.toFloat()
+                        if (points.isNotEmpty()) {
+                            val idx = ((offset.x / w) * (points.size - 1)).toInt().coerceIn(0, points.size - 1)
+                            touchedIndex = idx
+                        }
+                    },
+                    onDrag = { change, _ ->
+                        val w = size.width.toFloat()
+                        if (points.isNotEmpty()) {
+                            val idx = ((change.position.x / w) * (points.size - 1)).toInt().coerceIn(0, points.size - 1)
+                            touchedIndex = idx
+                        }
+                    },
+                    onDragEnd = { touchedIndex = null },
+                    onDragCancel = { touchedIndex = null }
+                )
+            }
+            .pointerInput(points) {
+                detectTapGestures(
+                    onTap = { offset ->
+                        val w = size.width.toFloat()
+                        if (points.isNotEmpty()) {
+                            val idx = ((offset.x / w) * (points.size - 1)).toInt().coerceIn(0, points.size - 1)
+                            touchedIndex = if (touchedIndex == idx) null else idx
+                        }
+                    }
+                )
+            }
+    ) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val width = size.width
+            val height = size.height
+            val bottomPadding = 24.dp.toPx()
+            val chartHeight = height - bottomPadding
+
+            // 1. Gridlines (D3 / Recharts horizontal rules)
+            val gridLines = 4
+            val gridColor = if (isDark) Color.White.copy(alpha = 0.07f) else Color(0xFFE2E8F0)
+            for (i in 0..gridLines) {
+                val y = (chartHeight / gridLines) * i
+                drawLine(
+                    color = gridColor,
+                    start = Offset(0f, y),
+                    end = Offset(width, y),
+                    strokeWidth = 1.dp.toPx(),
+                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 6f), 0f)
+                )
+            }
+
+            if (points.isEmpty()) return@Canvas
+
+            // 2. Build Smooth Cubic Splines for Inflow and Outflow
+            val n = points.size
+            fun getX(index: Int): Float = (index.toFloat() / (n - 1).coerceAtLeast(1)) * width
+            fun getY(value: Double): Float = (chartHeight - ((value / maxVal) * chartHeight * animProgress).toFloat()).coerceIn(0f, chartHeight)
+
+            // Expense Path (Neon Coral / Amber Gradient)
+            val expensePath = Path()
+            val expenseFillPath = Path()
+            expensePath.moveTo(getX(0), getY(points[0].expense))
+            expenseFillPath.moveTo(getX(0), chartHeight)
+            expenseFillPath.lineTo(getX(0), getY(points[0].expense))
+
+            for (i in 0 until n - 1) {
+                val x0 = getX(i)
+                val y0 = getY(points[i].expense)
+                val x1 = getX(i + 1)
+                val y1 = getY(points[i + 1].expense)
+                val cx = (x0 + x1) / 2f
+
+                expensePath.cubicTo(cx, y0, cx, y1, x1, y1)
+                expenseFillPath.cubicTo(cx, y0, cx, y1, x1, y1)
+            }
+            expenseFillPath.lineTo(getX(n - 1), chartHeight)
+            expenseFillPath.close()
+
+            // Inflow Path (Emerald Green Gradient)
+            val incomePath = Path()
+            val incomeFillPath = Path()
+            incomePath.moveTo(getX(0), getY(points[0].income))
+            incomeFillPath.moveTo(getX(0), chartHeight)
+            incomeFillPath.lineTo(getX(0), getY(points[0].income))
+
+            for (i in 0 until n - 1) {
+                val x0 = getX(i)
+                val y0 = getY(points[i].income)
+                val x1 = getX(i + 1)
+                val y1 = getY(points[i + 1].income)
+                val cx = (x0 + x1) / 2f
+
+                incomePath.cubicTo(cx, y0, cx, y1, x1, y1)
+                incomeFillPath.cubicTo(cx, y0, cx, y1, x1, y1)
+            }
+            incomeFillPath.lineTo(getX(n - 1), chartHeight)
+            incomeFillPath.close()
+
+            // Draw Area Gradient Fills
+            drawPath(
+                path = expenseFillPath,
+                brush = Brush.verticalGradient(
+                    colors = listOf(ExpenseCoral.copy(alpha = 0.28f), ExpenseCoral.copy(alpha = 0.01f)),
+                    startY = 0f,
+                    endY = chartHeight
+                )
+            )
+
+            drawPath(
+                path = incomeFillPath,
+                brush = Brush.verticalGradient(
+                    colors = listOf(AssetGreen.copy(alpha = 0.22f), AssetGreen.copy(alpha = 0.01f)),
+                    startY = 0f,
+                    endY = chartHeight
+                )
+            )
+
+            // Draw Curve Strokes
+            drawPath(
+                path = expensePath,
+                color = ExpenseCoral,
+                style = Stroke(width = 2.5.dp.toPx(), cap = StrokeCap.Round)
+            )
+
+            drawPath(
+                path = incomePath,
+                color = AssetGreen,
+                style = Stroke(width = 2.5.dp.toPx(), cap = StrokeCap.Round)
+            )
+
+            // Draw Interactive Scrub Crosshair & Glowing Nodes
+            touchedIndex?.let { idx ->
+                val point = points[idx]
+                val touchX = getX(idx)
+                val expY = getY(point.expense)
+                val incY = getY(point.income)
+
+                // Vertical Crosshair Line
+                drawLine(
+                    color = specs.contentPrimary.copy(alpha = 0.4f),
+                    start = Offset(touchX, 0f),
+                    end = Offset(touchX, chartHeight),
+                    strokeWidth = 1.5.dp.toPx(),
+                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(4f, 4f), 0f)
+                )
+
+                // Highlight Nodes
+                drawCircle(color = ExpenseCoral, radius = 5.dp.toPx(), center = Offset(touchX, expY))
+                drawCircle(color = Color.White, radius = 2.5.dp.toPx(), center = Offset(touchX, expY))
+
+                drawCircle(color = AssetGreen, radius = 5.dp.toPx(), center = Offset(touchX, incY))
+                drawCircle(color = Color.White, radius = 2.5.dp.toPx(), center = Offset(touchX, incY))
+            }
+        }
+
+        // Floating Interactive Tooltip
+        touchedIndex?.let { idx ->
+            val point = points[idx]
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(if (isDark) Color(0xFF1E293B) else Color(0xFF0F172A))
+                    .border(1.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(10.dp))
+                    .padding(horizontal = 12.dp, vertical = 6.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(point.fullDate, color = Color.White.copy(alpha = 0.8f), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    Text("Out: -$currency${String.format(Locale.getDefault(), "%,.0f", point.expense)}", color = ExpenseCoral, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    Text("In: +$currency${String.format(Locale.getDefault(), "%,.0f", point.income)}", color = AssetGreen, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    }
+}
+
+// -------------------------------------------------------------
+// RECHARTS MULTI-BAR COMPARISON CHART (Grouped In/Out Volume)
+// -------------------------------------------------------------
+@Composable
+fun RechartsBarComparisonChart(
+    points: List<TimeSeriesDataPoint>,
+    currency: String,
+    specs: AureumStyleSpecs,
+    modifier: Modifier = Modifier
+) {
+    var selectedBarIndex by remember { mutableStateOf<Int?>(null) }
+    val maxVal = remember(points) {
+        val maxPoint = points.maxOfOrNull { maxOf(it.expense, it.income) } ?: 100.0
+        if (maxPoint <= 0.0) 100.0 else maxPoint * 1.15
+    }
+
+    var animProgress by remember { mutableStateOf(0f) }
+    LaunchedEffect(points) {
+        animProgress = 0f
+        androidx.compose.animation.core.animate(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = tween(durationMillis = 750, easing = FastOutSlowInEasing)
+        ) { value, _ ->
+            animProgress = value
+        }
+    }
+
+    val isDark = specs.isDark
+
+    Box(modifier = modifier) {
+        Canvas(
+            modifier = Modifier
+                .fillMaxSize()
+                .pointerInput(points) {
+                    detectTapGestures { offset ->
+                        val w = size.width.toFloat()
+                        if (points.isNotEmpty()) {
+                            val barSlotWidth = w / points.size
+                            val idx = (offset.x / barSlotWidth).toInt().coerceIn(0, points.size - 1)
+                            selectedBarIndex = if (selectedBarIndex == idx) null else idx
+                        }
+                    }
+                }
+        ) {
+            val width = size.width
+            val height = size.height
+            val bottomPadding = 24.dp.toPx()
+            val chartHeight = height - bottomPadding
+
+            // Gridlines
+            val gridLines = 4
+            val gridColor = if (isDark) Color.White.copy(alpha = 0.07f) else Color(0xFFE2E8F0)
+            for (i in 0..gridLines) {
+                val y = (chartHeight / gridLines) * i
+                drawLine(
+                    color = gridColor,
+                    start = Offset(0f, y),
+                    end = Offset(width, y),
+                    strokeWidth = 1.dp.toPx(),
+                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 6f), 0f)
+                )
+            }
+
+            if (points.isEmpty()) return@Canvas
+
+            val numSlots = points.size
+            val slotWidth = width / numSlots
+            val barWidth = (slotWidth * 0.32f).coerceIn(4.dp.toPx(), 18.dp.toPx())
+            val gap = 3.dp.toPx()
+
+            points.forEachIndexed { idx, point ->
+                val centerX = slotWidth * idx + (slotWidth / 2f)
+                val isSelected = selectedBarIndex == idx
+
+                // Outflow Bar
+                val expHeight = ((point.expense / maxVal) * chartHeight * animProgress).toFloat().coerceAtLeast(2.dp.toPx())
+                val expTop = chartHeight - expHeight
+                drawRoundRect(
+                    color = if (isSelected) ExpenseCoral else ExpenseCoral.copy(alpha = 0.85f),
+                    topLeft = Offset(centerX - barWidth - (gap / 2), expTop),
+                    size = Size(barWidth, expHeight),
+                    cornerRadius = CornerRadius(4.dp.toPx(), 4.dp.toPx())
+                )
+
+                // Inflow Bar
+                val incHeight = ((point.income / maxVal) * chartHeight * animProgress).toFloat().coerceAtLeast(2.dp.toPx())
+                val incTop = chartHeight - incHeight
+                drawRoundRect(
+                    color = if (isSelected) AssetGreen else AssetGreen.copy(alpha = 0.85f),
+                    topLeft = Offset(centerX + (gap / 2), incTop),
+                    size = Size(barWidth, incHeight),
+                    cornerRadius = CornerRadius(4.dp.toPx(), 4.dp.toPx())
+                )
+            }
+        }
+
+        // Tooltip for Selected Bar
+        selectedBarIndex?.let { idx ->
+            val point = points[idx]
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(if (isDark) Color(0xFF1E293B) else Color(0xFF0F172A))
+                    .border(1.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(10.dp))
+                    .padding(horizontal = 12.dp, vertical = 6.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(point.dateLabel, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    Text("Out: -$currency${String.format(Locale.getDefault(), "%,.0f", point.expense)}", color = ExpenseCoral, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    Text("In: +$currency${String.format(Locale.getDefault(), "%,.0f", point.income)}", color = AssetGreen, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    }
+}
+
+// -------------------------------------------------------------
+// RECHARTS MULTI-SEGMENT DONUT CHART
+// -------------------------------------------------------------
+@Composable
+fun RechartsDonutChart(
+    metrics: List<CategorySpendMetric>,
+    totalExpense: Double,
+    currency: String,
+    modifier: Modifier = Modifier
+) {
+    var animationTriggered by remember { mutableStateOf(false) }
+    LaunchedEffect(metrics) {
+        animationTriggered = true
+    }
+
+    val sweepProgress by animateFloatAsState(
+        targetValue = if (animationTriggered) 1f else 0f,
+        animationSpec = tween(durationMillis = 800, easing = FastOutSlowInEasing),
+        label = "recharts_donut_sweep"
+    )
+
+    Box(modifier = modifier, contentAlignment = Alignment.Center) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val strokeWidth = 14.dp.toPx()
+            var currentAngle = -90f
+
+            metrics.forEach { metric ->
+                val sweep = (metric.percentage / 100f) * 360f * sweepProgress
+                drawArc(
+                    color = metric.color,
+                    startAngle = currentAngle,
+                    sweepAngle = sweep,
+                    useCenter = false,
+                    style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
+                )
+                currentAngle += sweep
+            }
+        }
+
+        // Center Label
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("SPENT", color = TextSecondary, fontSize = 8.5.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+            Text(
+                text = "$currency${String.format(Locale.getDefault(), "%,.0f", totalExpense)}",
+                color = MaterialTheme.colorScheme.onSurface,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+                fontFamily = FontFamily.Monospace
+            )
+        }
+    }
+}
 
 
 // -------------------------------------------------------------
@@ -5393,23 +6138,46 @@ fun SettingsScreen(
             Text("LEDGER ACCESS SECURITY", color = specs.contentPrimary, fontWeight = FontWeight.Bold, fontSize = 13.sp)
             Spacer(modifier = Modifier.height(12.dp))
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column {
-                    Text("Auto Lock Guard", color = specs.contentPrimary, fontSize = 14.sp)
-                    Text("Protect visual states on hide", color = specs.contentSecondary, fontSize = 11.sp)
+            if (correctPin.isEmpty()) {
+                // When no PIN is configured
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("App PIN Protection", color = specs.contentPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                        Text("Set a 4-digit PIN code to lock and secure your wallet", color = specs.contentSecondary, fontSize = 11.sp)
+                    }
+                    Button(
+                        onClick = {
+                            newPinInput = ""
+                            showChangePinDialog = true
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = specs.activeContainer),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("Set PIN", color = specs.onActiveContainer, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
                 }
-                Switch(
-                    checked = isPinGuardEnabled,
-                    onCheckedChange = { viewModel.setPinGuardEnabled(it) },
-                    colors = SwitchDefaults.colors(checkedThumbColor = specs.activeContainer)
-                )
-            }
+            } else {
+                // When PIN is configured
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text("Auto Lock Guard", color = specs.contentPrimary, fontSize = 14.sp)
+                        Text("Require PIN upon opening app", color = specs.contentSecondary, fontSize = 11.sp)
+                    }
+                    Switch(
+                        checked = isPinGuardEnabled,
+                        onCheckedChange = { viewModel.setPinGuardEnabled(it) },
+                        colors = SwitchDefaults.colors(checkedThumbColor = specs.activeContainer)
+                    )
+                }
 
-            if (isPinGuardEnabled) {
                 Spacer(modifier = Modifier.height(12.dp))
                 Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(specs.inactiveContainerBorder))
                 Spacer(modifier = Modifier.height(12.dp))
@@ -5420,8 +6188,8 @@ fun SettingsScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("Lock Screen Mode", color = specs.contentPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                        Text("Active PIN passcode: $correctPin", color = specs.contentSecondary, fontSize = 11.sp)
+                        Text("App Security PIN", color = specs.contentPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                        Text("4-digit passcode active", color = specs.contentSecondary, fontSize = 11.sp)
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(
@@ -5864,11 +6632,17 @@ fun SettingsScreen(
     if (showChangePinDialog) {
         AlertDialog(
             onDismissRequest = { showChangePinDialog = false },
-            title = { Text("Customize Passcode PIN", color = specs.contentPrimary, fontWeight = FontWeight.Bold) },
+            title = { 
+                Text(
+                    if (correctPin.isEmpty()) "Set Security PIN" else "Change Passcode PIN", 
+                    color = specs.contentPrimary, 
+                    fontWeight = FontWeight.Bold
+                ) 
+            },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(
-                        "Set a custom 4-digit security code PIN to restrict app access.",
+                        if (correctPin.isEmpty()) "Enter a new 4-digit PIN to secure your wallet." else "Enter a new 4-digit passcode PIN.",
                         color = specs.contentSecondary,
                         fontSize = 13.sp
                     )
@@ -5879,7 +6653,7 @@ fun SettingsScreen(
                                 newPinInput = input
                             }
                         },
-                        label = { Text("New 4-Digit PIN") },
+                        label = { Text("4-Digit PIN") },
                         placeholder = { Text("e.g. 2580") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         singleLine = true,
@@ -5928,34 +6702,42 @@ fun SettingsScreen(
             title = { Text("Secured Database Wipe", color = specs.contentPrimary, fontWeight = FontWeight.Bold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text(
-                        text = "To authorize deleting all accounts, transactions, and loan data, please enter the App Security PIN (Default PIN: 1234):",
-                        color = specs.contentSecondary,
-                        fontSize = 13.sp
-                    )
-                    TextField(
-                        value = wipeDataPinInput,
-                        onValueChange = { 
-                            wipeDataPinInput = it
-                            wipeDataError = false
-                        },
-                        label = { Text("Enter App PIN") },
-                        isError = wipeDataError,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-                        colors = TextFieldDefaults.colors(
-                            focusedTextColor = specs.contentPrimary,
-                            unfocusedTextColor = specs.contentPrimary,
-                            focusedContainerColor = Color.Transparent,
-                            unfocusedContainerColor = Color.Transparent
-                        ),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    if (wipeDataError) {
+                    if (correctPin.isNotEmpty()) {
                         Text(
-                            text = "Incorrect security PIN. Please try again.",
-                            color = ExpenseCoral,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold
+                            text = "To authorize deleting all accounts, transactions, and loan data, please enter your App Security PIN:",
+                            color = specs.contentSecondary,
+                            fontSize = 13.sp
+                        )
+                        TextField(
+                            value = wipeDataPinInput,
+                            onValueChange = { 
+                                wipeDataPinInput = it
+                                wipeDataError = false
+                            },
+                            label = { Text("Enter App PIN") },
+                            isError = wipeDataError,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                            colors = TextFieldDefaults.colors(
+                                focusedTextColor = specs.contentPrimary,
+                                unfocusedTextColor = specs.contentPrimary,
+                                focusedContainerColor = Color.Transparent,
+                                unfocusedContainerColor = Color.Transparent
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        if (wipeDataError) {
+                            Text(
+                                text = "Incorrect security PIN. Please try again.",
+                                color = ExpenseCoral,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    } else {
+                        Text(
+                            text = "Are you sure you want to delete all accounts, transactions, and loan data? This will reset all records to zero.",
+                            color = specs.contentSecondary,
+                            fontSize = 13.sp
                         )
                     }
                 }
@@ -5963,7 +6745,7 @@ fun SettingsScreen(
             confirmButton = {
                 Button(
                     onClick = {
-                        if (wipeDataPinInput == correctPin) {
+                        if (correctPin.isEmpty() || wipeDataPinInput == correctPin) {
                             viewModel.deleteAllData()
                             showWipeDataConfirm = false
                             wipeDataPinInput = ""

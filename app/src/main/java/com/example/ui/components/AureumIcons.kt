@@ -857,6 +857,32 @@ fun AureumVectorIcon(
                     strokeWidth = strokeWidth
                 )
             }
+            "dark_mode", "moon", "night" -> {
+                // Crescent moon
+                val moonPath = Path().apply {
+                    moveTo(w * 0.5f, h * 0.15f)
+                    cubicTo(w * 0.25f, h * 0.25f, w * 0.25f, h * 0.75f, w * 0.55f, h * 0.85f)
+                    cubicTo(w * 0.75f, h * 0.85f, w * 0.85f, h * 0.7f, w * 0.85f, h * 0.7f)
+                    cubicTo(w * 0.6f, h * 0.7f, w * 0.45f, h * 0.45f, w * 0.5f, h * 0.15f)
+                    close()
+                }
+                drawPath(path = moonPath, color = tint)
+            }
+            "light_mode", "sun", "day" -> {
+                // Sun center circle
+                drawCircle(color = tint, center = Offset(w * 0.5f, h * 0.5f), radius = w * 0.22f)
+                // 8 sun rays
+                val rayLen = w * 0.12f
+                val rayDist = w * 0.35f
+                for (angle in 0 until 360 step 45) {
+                    val rad = Math.toRadians(angle.toDouble())
+                    val startX = (w * 0.5f + Math.cos(rad) * rayDist).toFloat()
+                    val startY = (h * 0.5f + Math.sin(rad) * rayDist).toFloat()
+                    val endX = (w * 0.5f + Math.cos(rad) * (rayDist + rayLen)).toFloat()
+                    val endY = (h * 0.5f + Math.sin(rad) * (rayDist + rayLen)).toFloat()
+                    drawLine(color = tint, start = Offset(startX, startY), end = Offset(endX, endY), strokeWidth = strokeWidth * 0.8f, cap = StrokeCap.Round)
+                }
+            }
             else -> {
                 // Default fallback grid icon
                 drawRect(color = tint, topLeft = Offset(w * 0.25f, h * 0.25f), size = Size(w * 0.5f, h * 0.5f), style = Stroke(width = strokeWidth))

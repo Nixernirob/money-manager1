@@ -31,16 +31,31 @@ jobs:
       uses: gradle/actions/setup-gradle@v4
 
     # Prepare build environment and keystore
-    - name: Configure Gradle properties & Generate debug.keystore
+    - name: Configure Gradle properties & Restore consistent debug.keystore
       run: |
-        # Generate debug keystore for signing
-        keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+        # Use consistent keystore from repo to ensure updates never conflict with previous installations
+        if [ -f "debug.keystore.base64" ]; then
+          base64 -d debug.keystore.base64 > debug.keystore
+        elif [ ! -f "debug.keystore" ]; then
+          keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+        fi
         find . -type d -name "app" -exec cp debug.keystore {} \; || true
         
         # Ensure out-of-process Kotlin compilation daemon on CI to prevent Compose compiler plugin classloader conflicts
         sed -i 's/kotlin.compiler.execution.strategy=in-process/kotlin.compiler.execution.strategy=daemon/g' gradle.properties || true
         echo "org.gradle.jvmargs=-Xmx4g -Dfile.encoding=UTF-8 -Djava.awt.headless=true" >> gradle.properties
         echo "kotlin.compiler.execution.strategy=daemon" >> gradle.properties
+
+    # Extract App Version from build.gradle.kts for release synchronization
+    - name: Extract App Version
+      id: extract_version
+      run: |
+        APP_VER=$(grep -o 'versionName = "[^"]*"' app/build.gradle.kts | head -n 1 | cut -d '"' -f 2 || echo "2.0.0")
+        if [ -z "$APP_VER" ]; then
+          APP_VER="2.0.0"
+        fi
+        echo "app_version=$APP_VER" >> $GITHUB_OUTPUT
+        echo "Extracted App Version: $APP_VER"
 
     # Build Android APK
     - name: Build APK with Gradle
@@ -78,10 +93,10 @@ jobs:
       uses: softprops/action-gh-release@v2
       if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
       with:
-        tag_name: ${{ github.ref_name == 'main' && 'v1.0.0' || (github.ref_name == 'master' && 'v1.0.0' || github.ref_name) }}
-        name: "Aureum Wallet ${{ github.ref_name == 'main' && 'v1.0.0' || (github.ref_name == 'master' && 'v1.0.0' || github.ref_name) }}"
+        tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v{0}', steps.extract_version.outputs.app_version) }}
+        name: "Aureum Wallet v${{ steps.extract_version.outputs.app_version }}"
         body: |
-          ## Aureum Wallet Release
+          ## Aureum Wallet v${{ steps.extract_version.outputs.app_version }}
           - Automated build generated via GitHub Actions.
           - Download the attached `.apk` file below and install it directly on your Android device.
         files: ./aureum-wallet-release.apk
