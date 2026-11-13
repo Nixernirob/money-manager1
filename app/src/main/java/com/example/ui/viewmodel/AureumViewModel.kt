@@ -69,7 +69,7 @@ class AureumViewModel(application: Application) : AndroidViewModel(application) 
     val transactionFilterType = MutableStateFlow("ALL") // "ALL", "EXPENSES", "INCOMES"
     val transactionCategoryFilter = MutableStateFlow("ALL") // Category names
     val transactionAccountFilter = MutableStateFlow<Int?>(null) // null = All vaults, or Account.id
-    val transactionTimeFilter = MutableStateFlow("ALL") // "ALL", "TODAY", "7_DAYS", "15_DAYS", "30_DAYS", "THIS_MONTH", "CUSTOM_MONTH"
+    val transactionTimeFilter = MutableStateFlow("THIS_MONTH") // "ALL", "TODAY", "7_DAYS", "15_DAYS", "30_DAYS", "THIS_MONTH", "CUSTOM_MONTH"
     val transactionCustomMonth = MutableStateFlow(java.util.Calendar.getInstance().get(java.util.Calendar.MONTH)) // 0-11
     val transactionCustomYear = MutableStateFlow(java.util.Calendar.getInstance().get(java.util.Calendar.YEAR))
 

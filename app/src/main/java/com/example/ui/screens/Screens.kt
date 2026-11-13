@@ -68,10 +68,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import android.net.Uri
 import android.widget.Toast
-import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
-import androidx.compose.ui.input.nestedscroll.NestedScrollSource
-import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -1991,37 +1987,6 @@ fun TransactionsScreen(
 
     val context = LocalContext.current
     val specs = AureumThemeStyles.specs
-    val lazyListState = rememberLazyListState()
-    var isHeaderExpanded by remember { mutableStateOf(true) }
-    var scrollAccumulator by remember { mutableStateOf(0f) }
-
-    LaunchedEffect(filteredList.isEmpty()) {
-        if (filteredList.isEmpty()) {
-            isHeaderExpanded = true
-        }
-    }
-
-    val nestedScrollConnection = remember(filteredList.size) {
-        object : NestedScrollConnection {
-            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
-                val dy = available.y
-                if (dy < 0f && filteredList.isNotEmpty()) {
-                    scrollAccumulator = if (scrollAccumulator < 0f) scrollAccumulator + dy else dy
-                    if (scrollAccumulator < -28f) {
-                        isHeaderExpanded = false
-                        scrollAccumulator = 0f
-                    }
-                } else if (dy > 0f) {
-                    scrollAccumulator = if (scrollAccumulator > 0f) scrollAccumulator + dy else dy
-                    if (scrollAccumulator > 28f) {
-                        isHeaderExpanded = true
-                        scrollAccumulator = 0f
-                    }
-                }
-                return Offset.Zero
-            }
-        }
-    }
 
     val createPdfLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/pdf")
@@ -2059,24 +2024,21 @@ fun TransactionsScreen(
         }
     }
 
-    Column(
+    LazyColumn(
         modifier = modifier
             .fillMaxSize()
-            .nestedScroll(nestedScrollConnection)
             .padding(horizontal = 18.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+        contentPadding = PaddingValues(top = 16.dp, bottom = 100.dp)
     ) {
-        AnimatedVisibility(
-            visible = isHeaderExpanded,
-            enter = expandVertically(animationSpec = tween(durationMillis = 240)) + fadeIn(animationSpec = tween(durationMillis = 200)),
-            exit = shrinkVertically(animationSpec = tween(durationMillis = 220)) + fadeOut(animationSpec = tween(durationMillis = 180))
-        ) {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item(key = "ledger_header_and_filters") {
+            Column(
+                modifier = Modifier.padding(bottom = 2.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
                 // Header
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 16.dp),
+                    modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -2385,32 +2347,25 @@ fun TransactionsScreen(
         }
 
         // 6. Chronological Transaction List
-        LazyColumn(
-            state = lazyListState,
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-            contentPadding = PaddingValues(top = if (isHeaderExpanded) 0.dp else 12.dp, bottom = 100.dp),
-            modifier = Modifier.weight(1f)
-        ) {
-            if (filteredList.isEmpty()) {
-                item {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 40.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text("No matching transactions in this time period.", color = specs.contentSecondary, fontSize = 13.sp)
-                    }
+        if (filteredList.isEmpty()) {
+            item(key = "ledger_empty_state") {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 40.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("No matching transactions in this time period.", color = specs.contentSecondary, fontSize = 13.sp)
                 }
-            } else {
-                items(filteredList) { trans ->
-                    TransactionRow(
-                        transaction = trans,
-                        currency = currency,
-                        viewModel = viewModel,
-                        onDelete = { viewModel.deleteTransaction(trans) }
-                    )
-                }
+            }
+        } else {
+            items(filteredList, key = { it.id }) { trans ->
+                TransactionRow(
+                    transaction = trans,
+                    currency = currency,
+                    viewModel = viewModel,
+                    onDelete = { viewModel.deleteTransaction(trans) }
+                )
             }
         }
     }
