@@ -67,9 +67,15 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import android.net.Uri
+import android.widget.Toast
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.example.util.PdfExportHelper
 import kotlinx.coroutines.launch
 import java.io.File
 import java.io.FileOutputStream
@@ -1983,36 +1989,139 @@ fun TransactionsScreen(
         filteredList.filter { it.type == "EXPENSE" }.sumOf { it.amount }
     }
 
+    val context = LocalContext.current
     val specs = AureumThemeStyles.specs
+    val lazyListState = rememberLazyListState()
+    var isHeaderExpanded by remember { mutableStateOf(true) }
+    var scrollAccumulator by remember { mutableStateOf(0f) }
+
+    LaunchedEffect(filteredList.isEmpty()) {
+        if (filteredList.isEmpty()) {
+            isHeaderExpanded = true
+        }
+    }
+
+    val nestedScrollConnection = remember(filteredList.size) {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                val dy = available.y
+                if (dy < 0f && filteredList.isNotEmpty()) {
+                    scrollAccumulator = if (scrollAccumulator < 0f) scrollAccumulator + dy else dy
+                    if (scrollAccumulator < -28f) {
+                        isHeaderExpanded = false
+                        scrollAccumulator = 0f
+                    }
+                } else if (dy > 0f) {
+                    scrollAccumulator = if (scrollAccumulator > 0f) scrollAccumulator + dy else dy
+                    if (scrollAccumulator > 28f) {
+                        isHeaderExpanded = true
+                        scrollAccumulator = 0f
+                    }
+                }
+                return Offset.Zero
+            }
+        }
+    }
+
+    val createPdfLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/pdf")
+    ) { uri ->
+        if (uri != null) {
+            val activeVaultLabel = accountFilter?.let { id -> accounts.find { it.id == id }?.name } ?: "All Vaults"
+            val activeTimeLabel = when (timeFilter) {
+                "TODAY" -> "Today"
+                "7_DAYS" -> "Last 7 Days"
+                "15_DAYS" -> "15 Days"
+                "30_DAYS" -> "30 Days"
+                "THIS_MONTH" -> "This Month"
+                "CUSTOM_MONTH" -> "${shortMonthNames.getOrElse(customMonth) { "Month" }} $customYear"
+                else -> "All Time"
+            }
+            val filterSummary = "Filters: Type=$filterType | Period=$activeTimeLabel | Vault=$activeVaultLabel | Category=$categoryFilter"
+            val result = PdfExportHelper.exportTransactionsToPdf(
+                context = context,
+                uri = uri,
+                transactions = filteredList,
+                accounts = accounts,
+                summary = PdfExportHelper.ExportSummary(
+                    filterSummary = filterSummary,
+                    currency = currency,
+                    totalIncome = periodIncome,
+                    totalExpense = periodExpense,
+                    netBalance = periodIncome - periodExpense
+                )
+            )
+            result.onSuccess { count ->
+                Toast.makeText(context, "Exported $count transaction(s) to PDF", Toast.LENGTH_LONG).show()
+            }.onFailure { err ->
+                Toast.makeText(context, "Failed to export PDF: ${err.localizedMessage ?: "Unknown error"}", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
 
     Column(
         modifier = modifier
             .fillMaxSize()
+            .nestedScroll(nestedScrollConnection)
             .padding(horizontal = 18.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        // Header
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+        AnimatedVisibility(
+            visible = isHeaderExpanded,
+            enter = expandVertically(animationSpec = tween(durationMillis = 240)) + fadeIn(animationSpec = tween(durationMillis = 200)),
+            exit = shrinkVertically(animationSpec = tween(durationMillis = 220)) + fadeOut(animationSpec = tween(durationMillis = 180))
         ) {
-            Text(
-                text = "LEDGER ARCHIVE",
-                color = specs.contentSecondary,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold,
-                letterSpacing = 1.5.sp
-            )
-            Text(
-                text = "${filteredList.size} records",
-                color = specs.contentSecondary,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Medium
-            )
-        }
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                // Header
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 16.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            text = "LEDGER ARCHIVE",
+                            color = specs.contentSecondary,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.5.sp
+                        )
+                        Text(
+                            text = "${filteredList.size} records",
+                            color = specs.contentSecondary,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(specs.activeContainer)
+                            .clickable {
+                                val stamp = SimpleDateFormat("yyyyMMdd_HHmm", Locale.getDefault()).format(Date())
+                                createPdfLauncher.launch("aureum_ledger_$stamp.pdf")
+                            }
+                            .padding(horizontal = 12.dp, vertical = 7.dp)
+                            .testTag("ledger_export_pdf_button"),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        AureumVectorIcon(
+                            name = "share",
+                            tint = specs.onActiveContainer,
+                            modifier = Modifier.size(13.dp)
+                        )
+                        Text(
+                            text = "Export",
+                            color = specs.onActiveContainer,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
 
         // 1. Type Filters (ALL / EXPENSES / INCOMES)
         Row(
@@ -2272,11 +2381,14 @@ fun TransactionsScreen(
 
         // 5. Expense distribution Animated Pie Chart visualization (Synced to filteredList)
         ExpenseDistributionPieChart(transactions = filteredList, viewModel = viewModel)
+            }
+        }
 
         // 6. Chronological Transaction List
         LazyColumn(
+            state = lazyListState,
             verticalArrangement = Arrangement.spacedBy(10.dp),
-            contentPadding = PaddingValues(bottom = 100.dp),
+            contentPadding = PaddingValues(top = if (isHeaderExpanded) 0.dp else 12.dp, bottom = 100.dp),
             modifier = Modifier.weight(1f)
         ) {
             if (filteredList.isEmpty()) {
@@ -5086,20 +5198,25 @@ fun LoansScreen(
         val payable = if (net < 0) -net else 0.0
         val receivable = if (net > 0) net else 0.0
 
-        androidx.compose.ui.window.Dialog(
+        Dialog(
             onDismissRequest = { selectedSoftProfileForDetail.value = null },
-            properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
+            properties = DialogProperties(
+                usePlatformDefaultWidth = false,
+                decorFitsSystemWindows = false
+            )
         ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth(0.92f)
-                    .fillMaxHeight(0.85f)
-                    .clip(RoundedCornerShape(24.dp))
-                    .aureumGlass(shape = RoundedCornerShape(24.dp))
-                    .padding(20.dp)
+            BackHandler { selectedSoftProfileForDetail.value = null }
+
+            Surface(
+                modifier = Modifier.fillMaxSize(),
+                color = MaterialTheme.colorScheme.background
             ) {
                 Column(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .aureumBackground()
+                        .windowInsetsPadding(WindowInsets.safeDrawing)
+                        .padding(horizontal = 20.dp, vertical = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
                     // Header
@@ -5108,12 +5225,20 @@ fun LoansScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column {
+                        Column(modifier = Modifier.weight(1f)) {
                             Text("RELATIONSHIP LEDGER", color = specs.contentSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                            Text(profile.name, color = specs.contentPrimary, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                            Text(profile.name, color = specs.contentPrimary, fontSize = 22.sp, fontWeight = FontWeight.Bold)
                         }
-                        IconButton(onClick = { selectedSoftProfileForDetail.value = null }) {
-                            Text("✕", color = specs.contentPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                        IconButton(
+                            onClick = { selectedSoftProfileForDetail.value = null },
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clip(CircleShape)
+                                .background(specs.inactiveContainer)
+                                .border(1.dp, specs.inactiveContainerBorder, CircleShape)
+                                .testTag("close_soft_loan_detail_button")
+                        ) {
+                            Text("✕", color = specs.contentPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                         }
                     }
 
@@ -5129,7 +5254,8 @@ fun LoansScreen(
                             text = "Phone: ${profile.phoneNumber ?: "N/A"}\nNotes: ${profile.notes.ifBlank { "None" }}",
                             color = specs.contentSecondary,
                             fontSize = 12.sp,
-                            style = androidx.compose.ui.text.TextStyle(lineHeight = 16.sp)
+                            style = androidx.compose.ui.text.TextStyle(lineHeight = 16.sp),
+                            modifier = Modifier.weight(1f)
                         )
                         
                         Button(
@@ -5138,9 +5264,9 @@ fun LoansScreen(
                                 selectedSoftProfileForDetail.value = null
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = ExpenseCoral.copy(alpha = 0.2f)),
-                            shape = RoundedCornerShape(8.dp),
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                            modifier = Modifier.height(30.dp)
+                            shape = RoundedCornerShape(10.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                            modifier = Modifier.defaultMinSize(minHeight = 40.dp)
                         ) {
                             Text("DELETE PROFILE", color = ExpenseCoral, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                         }
@@ -5153,7 +5279,7 @@ fun LoansScreen(
                             .clip(RoundedCornerShape(14.dp))
                             .background(specs.inactiveContainer)
                             .border(1.dp, specs.inactiveContainerBorder, RoundedCornerShape(14.dp))
-                            .padding(12.dp)
+                            .padding(14.dp)
                     ) {
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text("SUMMARY BALANCE STATISTICS", color = specs.contentSecondary, fontSize = 9.sp, fontWeight = FontWeight.Bold)
@@ -5189,21 +5315,22 @@ fun LoansScreen(
                     
                     if (timelineLedger.isEmpty()) {
                         Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                            Text("No transactions logged with this profile.", color = specs.contentSecondary, fontSize = 12.sp)
+                            Text("No transactions logged with this profile.", color = specs.contentSecondary, fontSize = 13.sp)
                         }
                     } else {
                         LazyColumn(
                             modifier = Modifier.weight(1f).fillMaxWidth(),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                            contentPadding = PaddingValues(bottom = 24.dp)
                         ) {
                             items(timelineLedger.reversed()) { (tx, bal) ->
                                 Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .clip(RoundedCornerShape(12.dp))
-                                        .background(if (specs.isDark) Color.White.copy(alpha = 0.03f) else specs.inactiveContainer.copy(alpha = 0.5f))
-                                        .border(1.dp, if (specs.isDark) Color.White.copy(alpha = 0.06f) else specs.inactiveContainerBorder.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
-                                        .padding(10.dp)
+                                        .background(specs.inactiveContainer)
+                                        .border(1.dp, specs.inactiveContainerBorder, RoundedCornerShape(12.dp))
+                                        .padding(12.dp)
                                 ) {
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
@@ -5265,20 +5392,25 @@ fun LoansScreen(
         val lender = selectedFormalLenderForDetail.value!!
         val associatedLoans = loans.filter { it.type == "FORMAL" && it.borrowerOrLender == lender.name }
 
-        androidx.compose.ui.window.Dialog(
+        Dialog(
             onDismissRequest = { selectedFormalLenderForDetail.value = null },
-            properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
+            properties = DialogProperties(
+                usePlatformDefaultWidth = false,
+                decorFitsSystemWindows = false
+            )
         ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth(0.92f)
-                    .fillMaxHeight(0.8f)
-                    .clip(RoundedCornerShape(24.dp))
-                    .aureumGlass(shape = RoundedCornerShape(24.dp))
-                    .padding(20.dp)
+            BackHandler { selectedFormalLenderForDetail.value = null }
+
+            Surface(
+                modifier = Modifier.fillMaxSize(),
+                color = MaterialTheme.colorScheme.background
             ) {
                 Column(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .aureumBackground()
+                        .windowInsetsPadding(WindowInsets.safeDrawing)
+                        .padding(horizontal = 20.dp, vertical = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
                     Row(
@@ -5286,12 +5418,20 @@ fun LoansScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column {
+                        Column(modifier = Modifier.weight(1f)) {
                             Text("LENDER ACCOUNT PROFILE", color = specs.contentSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                            Text(lender.name, color = specs.contentPrimary, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                            Text(lender.name, color = specs.contentPrimary, fontSize = 22.sp, fontWeight = FontWeight.Bold)
                         }
-                        IconButton(onClick = { selectedFormalLenderForDetail.value = null }) {
-                            Text("✕", color = specs.contentPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                        IconButton(
+                            onClick = { selectedFormalLenderForDetail.value = null },
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clip(CircleShape)
+                                .background(specs.inactiveContainer)
+                                .border(1.dp, specs.inactiveContainerBorder, CircleShape)
+                                .testTag("close_formal_lender_detail_button")
+                        ) {
+                            Text("✕", color = specs.contentPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                         }
                     }
 
@@ -5299,7 +5439,11 @@ fun LoansScreen(
 
                     Text("Notes: ${lender.notes.ifBlank { "No description notes logged." }}", color = specs.contentSecondary, fontSize = 12.sp)
 
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         Text("Active loans associated: ${associatedLoans.count { !it.isCompleted }}", color = specs.contentPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                         Button(
                             onClick = {
@@ -5307,11 +5451,11 @@ fun LoansScreen(
                                 selectedFormalLenderForDetail.value = null
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = ExpenseCoral.copy(alpha = 0.2f)),
-                            shape = RoundedCornerShape(8.dp),
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                            modifier = Modifier.height(28.dp)
+                            shape = RoundedCornerShape(10.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                            modifier = Modifier.defaultMinSize(minHeight = 40.dp)
                         ) {
-                            Text("DELETE PROFILE", color = ExpenseCoral, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                            Text("DELETE PROFILE", color = ExpenseCoral, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                         }
                     }
 
@@ -5319,21 +5463,22 @@ fun LoansScreen(
 
                     if (associatedLoans.isEmpty()) {
                         Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                            Text("No credit facilities mapped to this lender.", color = specs.contentSecondary)
+                            Text("No credit facilities mapped to this lender.", color = specs.contentSecondary, fontSize = 13.sp)
                         }
                     } else {
                         LazyColumn(
                             modifier = Modifier.weight(1f).fillMaxWidth(),
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                            contentPadding = PaddingValues(bottom = 24.dp)
                         ) {
                             items(associatedLoans) { loan ->
                                 Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .clip(RoundedCornerShape(14.dp))
-                                        .background(if (specs.isDark) Color.White.copy(alpha = 0.03f) else specs.inactiveContainer)
-                                        .border(1.dp, if (specs.isDark) Color.White.copy(alpha = 0.06f) else specs.inactiveContainerBorder, RoundedCornerShape(14.dp))
-                                        .padding(12.dp)
+                                        .background(specs.inactiveContainer)
+                                        .border(1.dp, specs.inactiveContainerBorder, RoundedCornerShape(14.dp))
+                                        .padding(14.dp)
                                 ) {
                                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {

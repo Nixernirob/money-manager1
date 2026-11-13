@@ -65,16 +65,21 @@ jobs:
         sed -i 's/kotlin.compiler.execution.strategy=in-process/kotlin.compiler.execution.strategy=daemon/g' gradle.properties || true
         grep -q "java.awt.headless=true" gradle.properties || echo "org.gradle.jvmargs=-Xmx4g -Dfile.encoding=UTF-8 -Djava.awt.headless=true" >> gradle.properties
 
-    # Extract App Version from build.gradle.kts for release synchronization
+    # Generate unique increasing App Version per CI run for seamless in-place updates
     - name: Extract App Version
       id: extract_version
       run: |
-        APP_VER=$(grep -o 'versionName = "[^"]*"' app/build.gradle.kts | head -n 1 | cut -d '"' -f 2 || echo "2.1.0")
-        if [ -z "$APP_VER" ]; then
-          APP_VER="2.1.0"
+        BASE_VER=$(grep -o 'versionName = "[^"]*"' app/build.gradle.kts | head -n 1 | cut -d '"' -f 2 || true)
+        if [ -z "$BASE_VER" ] || echo "$BASE_VER" | grep -q "getenv"; then
+          BASE_VER="2.1"
         fi
-        echo "app_version=$APP_VER" >> "$GITHUB_OUTPUT"
-        echo "Extracted App Version: $APP_VER"
+        RUN_NUM="${GITHUB_RUN_NUMBER:-1}"
+        CI_VERSION_CODE=$((100 + RUN_NUM))
+        CI_VERSION_NAME="${BASE_VER}.${RUN_NUM}"
+        echo "CI_VERSION_CODE=$CI_VERSION_CODE" >> "$GITHUB_ENV"
+        echo "CI_VERSION_NAME=$CI_VERSION_NAME" >> "$GITHUB_ENV"
+        echo "app_version=$CI_VERSION_NAME" >> "$GITHUB_OUTPUT"
+        echo "Generated CI Version: $CI_VERSION_NAME (versionCode=$CI_VERSION_CODE)"
 
     # Build Android APK
     - name: Build APK with Gradle

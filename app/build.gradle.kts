@@ -14,8 +14,8 @@ android {
     applicationId = "com.aistudio.aureum.uxmpzq"
     minSdk = 24
     targetSdk = 36
-    versionCode = 4
-    versionName = "2.1.0"
+    versionCode = System.getenv("CI_VERSION_CODE")?.toIntOrNull() ?: 5
+    versionName = System.getenv("CI_VERSION_NAME") ?: "2.1.1"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
