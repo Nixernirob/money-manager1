@@ -68,6 +68,7 @@ class AureumViewModel(application: Application) : AndroidViewModel(application) 
     // Transaction List Filters (Daily / Calendar heat map / Monthly breakdown etc)
     val transactionFilterType = MutableStateFlow("ALL") // "ALL", "EXPENSES", "INCOMES"
     val transactionCategoryFilter = MutableStateFlow("ALL") // Category names
+    val transactionAccountFilter = MutableStateFlow<Int?>(null) // null = All vaults, or Account.id
     val transactionTimeFilter = MutableStateFlow("ALL") // "ALL", "TODAY", "7_DAYS", "15_DAYS", "30_DAYS", "THIS_MONTH", "CUSTOM_MONTH"
     val transactionCustomMonth = MutableStateFlow(java.util.Calendar.getInstance().get(java.util.Calendar.MONTH)) // 0-11
     val transactionCustomYear = MutableStateFlow(java.util.Calendar.getInstance().get(java.util.Calendar.YEAR))
@@ -430,6 +431,7 @@ class AureumViewModel(application: Application) : AndroidViewModel(application) 
             isDarkTheme.value = false
             transactionFilterType.value = "ALL"
             transactionCategoryFilter.value = "ALL"
+            transactionAccountFilter.value = null
 
             prefs.edit().apply {
                 putBoolean("pin_guard_enabled", false)
@@ -441,6 +443,7 @@ class AureumViewModel(application: Application) : AndroidViewModel(application) 
 
     fun deleteAllData() {
         viewModelScope.launch {
+            transactionAccountFilter.value = null
             repository.clearAllTables()
         }
     }

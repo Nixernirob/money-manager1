@@ -63,9 +63,13 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import android.net.Uri
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.launch
 import java.io.File
 import java.io.FileOutputStream
@@ -625,100 +629,263 @@ fun DashboardScreen(
     }
 
 
-    // Vault/Account Detail Modal (Slide-up style)
+    // Full-Screen Vault/Account Detail View
     if (selectedDetailVault != null) {
-        val account = selectedDetailVault!!
-        
-        AlertDialog(
+        val account = accounts.find { it.id == selectedDetailVault!!.id } ?: selectedDetailVault!!
+        val vaultColor = remember(account.tintHex) {
+            try {
+                Color(android.graphics.Color.parseColor(account.tintHex))
+            } catch (e: Exception) {
+                Color(0xFF10B981)
+            }
+        }
+
+        Dialog(
             onDismissRequest = { selectedDetailVault = null },
-            title = {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column {
-                        Text(account.name, color = specs.contentPrimary, fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                        Text(
-                            text = "Vault Balance: $currency${String.format(Locale.getDefault(), "%,.2f", account.balance)}",
-                            color = specs.contentSecondary,
-                            fontSize = 13.sp,
-                            fontFamily = FontFamily.Monospace
-                        )
-                    }
-                    IconButton(onClick = { selectedDetailVault = null }) {
-                        Text("✕", color = specs.contentPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                    }
-                }
-            },
-            text = {
-                var filterType by remember { mutableStateOf("ALL") } // ALL, INCOME, EXPENSE, TRANSFER
-                
-                val filteredVaultTransactions = transactions.filter {
+            properties = DialogProperties(
+                usePlatformDefaultWidth = false,
+                decorFitsSystemWindows = false
+            )
+        ) {
+            BackHandler { selectedDetailVault = null }
+
+            var filterType by remember(account.id) { mutableStateOf("ALL") } // ALL, INCOME, EXPENSE, TRANSFER
+
+            val filteredVaultTransactions = remember(transactions, account.id, filterType) {
+                transactions.filter {
                     (it.accountId == account.id || it.toAccountId == account.id) &&
                     (filterType == "ALL" || it.type == filterType)
-                }
-                
+                }.sortedByDescending { it.timestamp }
+            }
+
+            Surface(
+                modifier = Modifier.fillMaxSize(),
+                color = MaterialTheme.colorScheme.background
+            ) {
                 Column(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 400.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                        .fillMaxSize()
+                        .aureumBackground()
+                        .windowInsetsPadding(WindowInsets.safeDrawing)
+                        .padding(horizontal = 20.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
+                    // Top Bar with Vault Identity & Close (X) Button
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(44.dp)
+                                    .clip(CircleShape)
+                                    .background(vaultColor.copy(alpha = 0.16f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                AureumVectorIcon(
+                                    name = account.iconName,
+                                    tint = vaultColor,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                            Column {
+                                Text(
+                                    text = account.name,
+                                    color = specs.contentPrimary,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 22.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = "${account.type} VAULT",
+                                    color = specs.contentSecondary,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    letterSpacing = 1.sp
+                                )
+                            }
+                        }
+
+                        IconButton(
+                            onClick = { selectedDetailVault = null },
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clip(CircleShape)
+                                .background(specs.inactiveContainer)
+                                .border(1.dp, specs.inactiveContainerBorder, CircleShape)
+                                .testTag("close_vault_detail_button")
+                        ) {
+                            Text(
+                                text = "✕",
+                                color = specs.contentPrimary,
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+
+                    // Vault Balance Summary Card + Edit Vault & Color action
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(18.dp))
+                            .background(specs.inactiveContainer)
+                            .border(1.dp, specs.inactiveContainerBorder, RoundedCornerShape(18.dp))
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(
+                                text = "VAULT BALANCE",
+                                color = specs.contentSecondary,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 1.sp
+                            )
+                            Text(
+                                text = if (isBalanceHidden) {
+                                    "••••••"
+                                } else {
+                                    "$currency${String.format(Locale.getDefault(), "%,.2f", account.balance)}"
+                                },
+                                color = if (account.type == "CREDIT" || account.type == "CARD") ExpenseCoral else specs.contentPrimary,
+                                fontSize = 24.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = SFProFontFamily
+                            )
+                            if (account.creditLimit != null && !isBalanceHidden) {
+                                Text(
+                                    text = "Limit: $currency${String.format(Locale.getDefault(), "%,.0f", account.creditLimit)}",
+                                    color = specs.contentSecondary,
+                                    fontSize = 11.sp
+                                )
+                            }
+                        }
+
+                        Button(
+                            onClick = {
+                                editingVaultAccount = account
+                                editVaultName = account.name
+                                editVaultBalance = account.balance.toString()
+                                editVaultType = account.type.uppercase()
+                                editVaultCreditLimit = account.creditLimit?.toString() ?: ""
+                                editVaultColor = account.tintHex
+                                selectedDetailVault = null
+                                showEditVaultDialog = true
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = specs.activeContainer,
+                                contentColor = specs.onActiveContainer
+                            ),
+                            shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
+                            modifier = Modifier
+                                .defaultMinSize(minHeight = 48.dp)
+                                .testTag("edit_vault_detail_button")
+                        ) {
+                            Text(
+                                text = "Edit Vault & Color",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+
                     // Filters row
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         listOf("ALL", "INCOME", "EXPENSE", "TRANSFER").forEach { fType ->
                             val active = filterType == fType
                             Box(
                                 modifier = Modifier
                                     .weight(1f)
-                                    .clip(RoundedCornerShape(8.dp))
+                                    .defaultMinSize(minHeight = 48.dp)
+                                    .clip(RoundedCornerShape(12.dp))
                                     .background(if (active) specs.activeContainer else specs.inactiveContainer)
+                                    .border(
+                                        1.dp,
+                                        if (active) Color.Transparent else specs.inactiveContainerBorder,
+                                        RoundedCornerShape(12.dp)
+                                    )
                                     .clickable { filterType = fType }
-                                    .padding(vertical = 6.dp),
+                                    .padding(vertical = 10.dp),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(
-                                    text = when(fType) {
+                                    text = when (fType) {
                                         "ALL" -> "All"
                                         "INCOME" -> "Income"
                                         "EXPENSE" -> "Expense"
                                         else -> "Transfer"
                                     },
                                     color = if (active) specs.onActiveContainer else specs.contentPrimary,
-                                    fontSize = 11.sp,
+                                    fontSize = 12.sp,
                                     fontWeight = FontWeight.Bold
                                 )
                             }
                         }
                     }
-                    
-                    Spacer(modifier = Modifier.height(4.dp))
-                    
-                    Text(
-                        text = "TRANSACTIONS FOR THIS VAULT",
-                        color = specs.contentSecondary,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 1.sp
-                    )
-                    
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "TRANSACTIONS FOR THIS VAULT",
+                            color = specs.contentSecondary,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.sp
+                        )
+                        Text(
+                            text = "${filteredVaultTransactions.size} records",
+                            color = specs.contentSecondary,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+
                     if (filteredVaultTransactions.isEmpty()) {
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(120.dp),
+                                .weight(1f),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text("No matching transactions in this vault.", color = specs.contentSecondary, fontSize = 12.sp)
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                AureumVectorIcon(
+                                    name = account.iconName,
+                                    tint = specs.contentSecondary.copy(alpha = 0.45f),
+                                    modifier = Modifier.size(36.dp)
+                                )
+                                Text(
+                                    text = "No matching transactions in this vault.",
+                                    color = specs.contentSecondary,
+                                    fontSize = 14.sp
+                                )
+                            }
                         }
                     } else {
                         LazyColumn(
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier.fillMaxWidth().weight(1f)
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                            contentPadding = PaddingValues(bottom = 24.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f)
                         ) {
                             items(filteredVaultTransactions) { tr ->
                                 TransactionRow(
@@ -731,33 +898,8 @@ fun DashboardScreen(
                         }
                     }
                 }
-            },
-            confirmButton = {},
-            dismissButton = {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButton(
-                        onClick = {
-                            val acc = selectedDetailVault
-                            if (acc != null) {
-                                editingVaultAccount = acc
-                                editVaultName = acc.name
-                                editVaultBalance = acc.balance.toString()
-                                editVaultType = acc.type.uppercase()
-                                editVaultCreditLimit = acc.creditLimit?.toString() ?: ""
-                                editVaultColor = acc.tintHex
-                                selectedDetailVault = null
-                                showEditVaultDialog = true
-                            }
-                        }
-                    ) {
-                        Text("Edit Vault & Color", color = specs.activeContainer, fontWeight = FontWeight.Bold)
-                    }
-                    TextButton(onClick = { selectedDetailVault = null }) {
-                        Text("Close", color = specs.contentSecondary, fontWeight = FontWeight.Bold)
-                    }
-                }
             }
-        )
+        }
     }
 
     // Add Vault Dialog with Card Color Selector on Home Screen
@@ -1177,7 +1319,7 @@ fun AccountSwipeCard(
                     text = numberMask,
                     color = secondaryTextColor,
                     fontSize = 11.sp,
-                    fontFamily = FontFamily.Monospace
+                    fontFamily = SFProFontFamily
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Row(verticalAlignment = Alignment.Bottom) {
@@ -1186,7 +1328,7 @@ fun AccountSwipeCard(
                         color = primaryTextColor,
                         fontSize = 20.sp,
                         fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace
+                        fontFamily = SFProFontFamily
                     )
                 }
             }
@@ -1248,7 +1390,7 @@ fun InsightChip(
                 color = valColor, 
                 fontSize = 15.sp, 
                 fontWeight = FontWeight.Bold, 
-                fontFamily = FontFamily.Monospace
+                fontFamily = SFProFontFamily
             )
         }
     }
@@ -1451,7 +1593,7 @@ fun TransactionRow(
                     color = amountColor,
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Bold,
-                    fontFamily = FontFamily.Monospace
+                    fontFamily = SFProFontFamily
                 )
                 Text(
                     text = SimpleDateFormat("MMM dd, HH:mm", Locale.getDefault()).format(Date(transaction.timestamp)),
@@ -1545,7 +1687,7 @@ fun TransactionRow(
                         color = amountColor,
                         fontSize = 24.sp,
                         fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace
+                        fontFamily = SFProFontFamily
                     )
 
                     // Meta Info List
@@ -1730,9 +1872,11 @@ fun TransactionsScreen(
     modifier: Modifier = Modifier
 ) {
     val transactions by viewModel.allTransactions.collectAsState()
+    val accounts by viewModel.allAccounts.collectAsState()
     val currency by viewModel.selectedCurrency.collectAsState()
     val filterType by viewModel.transactionFilterType.collectAsState()
     val categoryFilter by viewModel.transactionCategoryFilter.collectAsState()
+    val accountFilter by viewModel.transactionAccountFilter.collectAsState()
     val timeFilter by viewModel.transactionTimeFilter.collectAsState()
     val customMonth by viewModel.transactionCustomMonth.collectAsState()
     val customYear by viewModel.transactionCustomYear.collectAsState()
@@ -1749,9 +1893,10 @@ fun TransactionsScreen(
         listOf("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
     }
 
-    val filteredList = remember(transactions, categoryFilter, filterType, timeFilter, customMonth, customYear) {
+    val filteredList = remember(transactions, categoryFilter, accountFilter, filterType, timeFilter, customMonth, customYear) {
         transactions.filter {
             val categoryMatch = categoryFilter == "ALL" || it.category == categoryFilter
+            val accountMatch = accountFilter == null || it.accountId == accountFilter || it.toAccountId == accountFilter
             val typeMatch = when (filterType) {
                 "EXPENSES" -> it.type == "EXPENSE"
                 "INCOMES" -> it.type == "INCOME"
@@ -1827,7 +1972,7 @@ fun TransactionsScreen(
                 }
                 else -> true
             }
-            categoryMatch && typeMatch && timeMatch
+            categoryMatch && accountMatch && typeMatch && timeMatch
         }.sortedByDescending { it.timestamp }
     }
 
@@ -1975,7 +2120,71 @@ fun TransactionsScreen(
             }
         }
 
-        // 3. Category Filter Scroll
+        // 3. Vault / Account Filter Scroll (All Vaults, Cash, Credit Card, etc.)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            val allActive = accountFilter == null
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(if (allActive) specs.activeContainer else specs.inactiveContainer)
+                    .border(1.dp, if (allActive) Color.Transparent else specs.inactiveContainerBorder, RoundedCornerShape(8.dp))
+                    .clickable { viewModel.transactionAccountFilter.value = null }
+                    .padding(horizontal = 12.dp, vertical = 6.dp)
+                    .testTag("ledger_account_filter_all")
+            ) {
+                Text(
+                    text = "All Vaults",
+                    color = if (allActive) specs.onActiveContainer else specs.contentPrimary,
+                    fontSize = 11.sp,
+                    fontWeight = if (allActive) FontWeight.Bold else FontWeight.Medium
+                )
+            }
+
+            accounts.forEach { acc ->
+                val active = accountFilter == acc.id
+                val accColor = remember(acc.tintHex) {
+                    try {
+                        Color(android.graphics.Color.parseColor(acc.tintHex))
+                    } catch (e: Exception) {
+                        Color(0xFF10B981)
+                    }
+                }
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (active) specs.activeContainer else specs.inactiveContainer)
+                        .border(1.dp, if (active) Color.Transparent else specs.inactiveContainerBorder, RoundedCornerShape(8.dp))
+                        .clickable { viewModel.transactionAccountFilter.value = acc.id }
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                        .testTag("ledger_account_filter_${acc.id}")
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
+                        AureumVectorIcon(
+                            name = acc.iconName,
+                            tint = if (active) specs.onActiveContainer else accColor,
+                            modifier = Modifier.size(12.dp)
+                        )
+                        Text(
+                            text = acc.name,
+                            color = if (active) specs.onActiveContainer else specs.contentPrimary,
+                            fontSize = 11.sp,
+                            fontWeight = if (active) FontWeight.Bold else FontWeight.Medium
+                        )
+                    }
+                }
+            }
+        }
+
+        // 4. Category Filter Scroll
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -2029,7 +2238,7 @@ fun TransactionsScreen(
                     color = AssetGreen,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
-                    fontFamily = FontFamily.Monospace
+                    fontFamily = SFProFontFamily
                 )
             }
             Row(
@@ -2042,7 +2251,7 @@ fun TransactionsScreen(
                     color = ExpenseCoral,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
-                    fontFamily = FontFamily.Monospace
+                    fontFamily = SFProFontFamily
                 )
             }
             Row(
@@ -2056,7 +2265,7 @@ fun TransactionsScreen(
                     color = if (netDiff >= 0) specs.contentPrimary else ExpenseCoral,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
-                    fontFamily = FontFamily.Monospace
+                    fontFamily = SFProFontFamily
                 )
             }
         }
@@ -2130,7 +2339,7 @@ fun TransactionsScreen(
                             color = specs.contentPrimary,
                             fontSize = 16.sp,
                             fontWeight = FontWeight.Bold,
-                            fontFamily = FontFamily.Monospace
+                            fontFamily = SFProFontFamily
                         )
                         IconButton(
                             onClick = { pickerYear++ },
@@ -2669,7 +2878,7 @@ fun StatsScreen(
                             color = ExpenseCoral,
                             fontSize = 17.sp,
                             fontWeight = FontWeight.Bold,
-                            fontFamily = FontFamily.Monospace
+                            fontFamily = SFProFontFamily
                         )
                         Text(
                             text = "${filteredTransactions.count { it.type == "EXPENSE" }} transactions",
@@ -2698,7 +2907,7 @@ fun StatsScreen(
                             color = AssetGreen,
                             fontSize = 17.sp,
                             fontWeight = FontWeight.Bold,
-                            fontFamily = FontFamily.Monospace
+                            fontFamily = SFProFontFamily
                         )
                         Text(
                             text = "${filteredTransactions.count { it.type == "INCOME" }} transactions",
@@ -2928,7 +3137,7 @@ fun StatsScreen(
                                     color = specs.contentPrimary,
                                     fontSize = 13.5.sp,
                                     fontWeight = FontWeight.Bold,
-                                    fontFamily = FontFamily.Monospace
+                                    fontFamily = SFProFontFamily
                                 )
                             }
                         }
@@ -2949,7 +3158,7 @@ fun StatsScreen(
                                     color = if (savingsRate >= 20.0) AssetGreen else if (savingsRate >= 0) specs.contentPrimary else ExpenseCoral,
                                     fontSize = 13.5.sp,
                                     fontWeight = FontWeight.Bold,
-                                    fontFamily = FontFamily.Monospace
+                                    fontFamily = SFProFontFamily
                                 )
                             }
                         }
@@ -3081,7 +3290,7 @@ fun StatsScreen(
                                     color = ExpenseCoral,
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 14.sp,
-                                    fontFamily = FontFamily.Monospace
+                                    fontFamily = SFProFontFamily
                                 )
                             }
                         }
@@ -3472,7 +3681,7 @@ fun RechartsDonutChart(
                 color = MaterialTheme.colorScheme.onSurface,
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Bold,
-                fontFamily = FontFamily.Monospace
+                fontFamily = SFProFontFamily
             )
         }
     }
@@ -3619,7 +3828,7 @@ fun AccountsScreen(
                             "$currency${String.format(Locale.getDefault(), "%,.2f", acc.balance)}",
                             color = if (acc.type == "CREDIT" || acc.type == "CARD") ExpenseCoral else specs.contentPrimary,
                             fontWeight = FontWeight.Bold,
-                            fontFamily = FontFamily.Monospace,
+                            fontFamily = SFProFontFamily,
                             fontSize = 15.sp
                         )
                         if (acc.creditLimit != null) {
@@ -4111,7 +4320,7 @@ fun LoansScreen(
                             color = ExpenseCoral,
                             fontWeight = FontWeight.Bold,
                             fontSize = 15.sp,
-                            fontFamily = FontFamily.Monospace
+                            fontFamily = SFProFontFamily
                         )
                     }
                     
@@ -4131,7 +4340,7 @@ fun LoansScreen(
                             color = AssetGreen,
                             fontWeight = FontWeight.Bold,
                             fontSize = 15.sp,
-                            fontFamily = FontFamily.Monospace
+                            fontFamily = SFProFontFamily
                         )
                     }
                 }
@@ -4178,7 +4387,7 @@ fun LoansScreen(
                             color = if (netSoftPosition >= 0.0) AssetGreen else ExpenseCoral,
                             fontWeight = FontWeight.Bold,
                             fontSize = 18.sp,
-                            fontFamily = FontFamily.Monospace
+                            fontFamily = SFProFontFamily
                         )
                     }
                 }
@@ -5031,14 +5240,14 @@ fun LoansScreen(
                                                 color = if (tx.softLoanType == "GIVE" || tx.softLoanType == "REPAY") AssetGreen else ExpenseCoral,
                                                 fontWeight = FontWeight.Bold,
                                                 fontSize = 13.sp,
-                                                fontFamily = FontFamily.Monospace
+                                                fontFamily = SFProFontFamily
                                             )
                                             Text(
                                                 text = "Bal: $currency${bal.toInt()}",
                                                 color = if (bal >= 0.0) AssetGreen else ExpenseCoral,
                                                 fontSize = 10.sp,
                                                 fontWeight = FontWeight.Bold,
-                                                fontFamily = FontFamily.Monospace
+                                                fontFamily = SFProFontFamily
                                             )
                                         }
                                     }
@@ -5141,7 +5350,7 @@ fun LoansScreen(
                                             color = specs.contentPrimary,
                                             fontSize = 13.sp,
                                             fontWeight = FontWeight.Bold,
-                                            fontFamily = FontFamily.Monospace
+                                            fontFamily = SFProFontFamily
                                         )
                                         Text("Date: ${loan.startDate} • Due: ${loan.dueDateString}", color = specs.contentSecondary, fontSize = 10.sp)
                                     }
@@ -5276,7 +5485,7 @@ fun FormalRepayTimelineCard(
                         Spacer(modifier = Modifier.height(4.dp))
                         Text("PAYMENT HISTORY", color = specs.contentSecondary, fontSize = 9.sp, fontWeight = FontWeight.Bold)
                         loan.paymentsJson.split("|").forEach { payment ->
-                            Text("• $payment", color = AssetGreen, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+                            Text("• $payment", color = AssetGreen, fontSize = 11.sp, fontFamily = SFProFontFamily)
                         }
                     }
                 }
@@ -5516,7 +5725,7 @@ fun AddTransactionScreen(
                         color = if (selectedType == "INCOME") AssetGreen else if (selectedType == "EXPENSE") ExpenseCoral else specs.contentPrimary,
                         fontSize = 26.sp,
                         fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace
+                        fontFamily = SFProFontFamily
                     )
                 }
                 Row(
@@ -5775,7 +5984,7 @@ fun AddTransactionScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text("Transfer Fee (Optional):", color = specs.contentSecondary, fontSize = 12.sp)
-                    Text("$currency$transferFeeStr", color = specs.contentPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+                    Text("$currency$transferFeeStr", color = specs.contentPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold, fontFamily = SFProFontFamily)
                 }
             }
         }
@@ -5936,7 +6145,7 @@ fun AddTransactionScreen(
                             },
                             fontSize = 32.sp,
                             fontWeight = FontWeight.Bold,
-                            fontFamily = FontFamily.Monospace
+                            fontFamily = SFProFontFamily
                         )
                     }
 
@@ -6606,7 +6815,7 @@ fun SettingsScreen(
                 Text(
                     text = exportStatusMsg ?: "",
                     color = TextSecondary,
-                    fontFamily = FontFamily.Monospace,
+                    fontFamily = SFProFontFamily,
                     fontSize = 12.sp
                 )
             },
@@ -6829,9 +7038,9 @@ fun CalculatorCompactWidget(viewModel: AureumViewModel) {
                 .padding(12.dp)
         ) {
             Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.End) {
-                Text(calcExpr.ifBlank { "0" }, color = specs.contentPrimary, fontSize = 16.sp, fontFamily = FontFamily.Monospace)
+                Text(calcExpr.ifBlank { "0" }, color = specs.contentPrimary, fontSize = 16.sp, fontFamily = SFProFontFamily)
                 Spacer(modifier = Modifier.height(4.dp))
-                Text(calcRes, color = specs.headingColor, fontSize = 20.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+                Text(calcRes, color = specs.headingColor, fontSize = 20.sp, fontWeight = FontWeight.Bold, fontFamily = SFProFontFamily)
             }
         }
 
