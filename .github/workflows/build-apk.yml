@@ -15,109 +15,115 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+    - name: Checkout Repository
+      uses: actions/checkout@v4
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'zulu'
-          java-version: '17'
+    - name: Set up JDK 21
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '21'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          packages: |
-            cmdline-tools;latest
-            platform-tools
-            platforms;android-36
-            build-tools;36.0.0
+    - name: Setup Android SDK & Licenses
+      run: |
+        SDK_DIR="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+        if [ ! -d "$SDK_DIR" ]; then
+          echo "Android SDK directory not found at $SDK_DIR"
+          exit 1
+        fi
+        echo "ANDROID_HOME=$SDK_DIR" >> "$GITHUB_ENV"
+        echo "ANDROID_SDK_ROOT=$SDK_DIR" >> "$GITHUB_ENV"
 
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
+        SDKMANAGER=$(find "$SDK_DIR/cmdline-tools" -name "sdkmanager" -type f 2>/dev/null | sort -V | tail -n 1 || true)
+        if [ -z "$SDKMANAGER" ]; then
+          echo "sdkmanager not found under $SDK_DIR/cmdline-tools"
+          exit 1
+        fi
+        echo "Using sdkmanager: $SDKMANAGER"
 
-      - name: Configure Gradle properties & Restore consistent debug.keystore
-        shell: bash
-        run: |
-          if [ -f "debug.keystore.base64" ]; then
-            base64 -d debug.keystore.base64 > debug.keystore
-          elif [ ! -f "debug.keystore" ]; then
-            keytool -genkey -v \
-              -keystore debug.keystore \
-              -storepass android \
-              -alias androiddebugkey \
-              -keypass android \
-              -keyalg RSA \
-              -keysize 2048 \
-              -validity 10000 \
-              -dname "CN=Android Debug,O=Android,C=US"
+        yes | "$SDKMANAGER" --licenses > /dev/null || true
+        "$SDKMANAGER" --install "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+        "$SDKMANAGER" --install "platforms;android-36.1" || true
+
+    - name: Setup Gradle
+      uses: gradle/actions/setup-gradle@v4
+      with:
+        gradle-version: '9.3.1'
+
+    # Prepare build environment and keystore
+    - name: Configure Gradle properties & Restore consistent debug.keystore
+      run: |
+        # Use consistent keystore from repo to ensure updates never conflict with previous installations
+        if [ -f "debug.keystore.base64" ]; then
+          base64 -d debug.keystore.base64 > debug.keystore
+        elif [ ! -f "debug.keystore" ]; then
+          keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+        fi
+        find . -maxdepth 2 -type d -name "app" -exec cp debug.keystore {} \; || true
+
+        # Ensure out-of-process Kotlin compilation daemon on CI to prevent Compose compiler plugin classloader conflicts
+        sed -i 's/kotlin.compiler.execution.strategy=in-process/kotlin.compiler.execution.strategy=daemon/g' gradle.properties || true
+        grep -q "java.awt.headless=true" gradle.properties || echo "org.gradle.jvmargs=-Xmx4g -Dfile.encoding=UTF-8 -Djava.awt.headless=true" >> gradle.properties
+
+    # Extract App Version from build.gradle.kts for release synchronization
+    - name: Extract App Version
+      id: extract_version
+      run: |
+        APP_VER=$(grep -o 'versionName = "[^"]*"' app/build.gradle.kts | head -n 1 | cut -d '"' -f 2 || echo "2.1.0")
+        if [ -z "$APP_VER" ]; then
+          APP_VER="2.1.0"
+        fi
+        echo "app_version=$APP_VER" >> "$GITHUB_OUTPUT"
+        echo "Extracted App Version: $APP_VER"
+
+    # Build Android APK
+    - name: Build APK with Gradle
+      run: |
+        GRADLEW_PATH=$(find . -maxdepth 2 -name "gradlew" | head -n 1 || true)
+        if [ -n "$GRADLEW_PATH" ]; then
+          DIR_PATH=$(dirname "$GRADLEW_PATH")
+          cd "$DIR_PATH"
+          chmod +x ./gradlew
+          ./gradlew assembleDebug --stacktrace -Dkotlin.compiler.execution.strategy=daemon -Djava.awt.headless=true
+        else
+          ROOT_SETTINGS=$(find . -maxdepth 2 \( -name "settings.gradle.kts" -o -name "settings.gradle" \) | head -n 1 || true)
+          if [ -n "$ROOT_SETTINGS" ]; then
+            cd "$(dirname "$ROOT_SETTINGS")"
           fi
+          gradle assembleDebug --stacktrace -Dkotlin.compiler.execution.strategy=daemon -Djava.awt.headless=true
+        fi
+      env:
+        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        GRADLE_OPTS: "-Dkotlin.compiler.execution.strategy=daemon -Djava.awt.headless=true"
 
-          find . -type d -name "app" -exec cp debug.keystore {} \; || true
+    - name: Find and Rename APK
+      run: |
+        APK_FILE=$(find . -name "*.apk" -path "*/build/outputs/apk/debug/*" | head -n 1 || true)
+        if [ -z "$APK_FILE" ]; then
+          echo "Error: Debug APK not found after build"
+          exit 1
+        fi
+        echo "Found APK: $APK_FILE"
+        cp "$APK_FILE" ./aureum-wallet-release.apk
 
-          if [ -f gradle.properties ]; then
-            sed -i 's/kotlin.compiler.execution.strategy=in-process/kotlin.compiler.execution.strategy=daemon/g' gradle.properties || true
-          fi
+    - name: Upload APK Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: aureum-wallet-apk
+        path: './aureum-wallet-release.apk'
 
-          echo "org.gradle.jvmargs=-Xmx4g -Dfile.encoding=UTF-8 -Djava.awt.headless=true" >> gradle.properties
-          echo "kotlin.compiler.execution.strategy=daemon" >> gradle.properties
-
-      - name: Extract App Version
-        id: extract_version
-        shell: bash
-        run: |
-          APP_VER=$(grep -o 'versionName = "[^"]*"' app/build.gradle.kts | head -n 1 | cut -d '"' -f 2 || echo "2.0.0")
-          if [ -z "$APP_VER" ]; then
-            APP_VER="2.0.0"
-          fi
-          echo "app_version=$APP_VER" >> "$GITHUB_OUTPUT"
-          echo "Extracted App Version: $APP_VER"
-
-      - name: Build APK with Gradle
-        shell: bash
-        run: |
-          GRADLEW_PATH=$(find . -name "gradlew" | head -n 1)
-          if [ -n "$GRADLEW_PATH" ]; then
-            DIR_PATH=$(dirname "$GRADLEW_PATH")
-            cd "$DIR_PATH"
-            chmod +x ./gradlew
-            ./gradlew assembleDebug --stacktrace -Dkotlin.compiler.execution.strategy=daemon -Djava.awt.headless=true
-          else
-            BUILD_GRADLE_PATH=$(find . -name "build.gradle" -o -name "build.gradle.kts" | head -n 1)
-            DIR_PATH=$(dirname "$BUILD_GRADLE_PATH")
-            cd "$DIR_PATH"
-            gradle assembleDebug --stacktrace -Dkotlin.compiler.execution.strategy=daemon -Djava.awt.headless=true
-          fi
-        env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GRADLE_OPTS: "-Dkotlin.compiler.execution.strategy=daemon -Djava.awt.headless=true"
-
-      - name: Find and Rename APK
-        shell: bash
-        run: |
-          APK_FILE=$(find . -name "*.apk" -path "*/build/outputs/apk/debug/*" | head -n 1)
-          if [ -n "$APK_FILE" ]; then
-            cp "$APK_FILE" ./aureum-wallet-release.apk
-          fi
-
-      - name: Upload APK Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: aureum-wallet-apk
-          path: './aureum-wallet-release.apk'
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
-        with:
-          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v{0}', steps.extract_version.outputs.app_version) }}
-          name: "Aureum Wallet v${{ steps.extract_version.outputs.app_version }}"
-          body: |
-            ## Aureum Wallet v${{ steps.extract_version.outputs.app_version }}
-            - Automated build generated via GitHub Actions.
-            - Download the attached `.apk` file below and install it directly on your Android device.
-          files: ./aureum-wallet-release.apk
-          draft: false
-          prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+      with:
+        tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v{0}', steps.extract_version.outputs.app_version) }}
+        name: "Aureum Wallet v${{ steps.extract_version.outputs.app_version }}"
+        body: |
+          ## Aureum Wallet v${{ steps.extract_version.outputs.app_version }}
+          - Automated build generated via GitHub Actions.
+          - Download the attached `.apk` file below and install it directly on your Android device.
+        files: ./aureum-wallet-release.apk
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
